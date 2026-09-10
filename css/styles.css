@@ -7158,6 +7158,13 @@ body.bg-boss99::before, body.bg-boss99::after { display: none !important; }
 /* 底部：行星轮播 */
 .earth99-carousel { position: absolute; left: 12px; right: 12px; bottom: 12px; z-index: 4;
   display: flex; gap: 7px; overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch; padding: 2px; }
+/* v12.9.48 手机适配：右侧信息卡改底部横条（不再遮住地球半张脸）；年代列限高不过中线 */
+@media (max-width: 720px) {
+  .earth99-info { left: 10px; right: 10px; width: auto; max-width: none; top: auto;
+    bottom: 148px; max-height: 24vh; padding: 10px; }
+  .earth99-eras { max-height: 46vh; top: auto; transform: none; bottom: 208px; }
+  .earth99-era { padding: 6px 7px; font-size: 8.5px; }
+}
 .earth99-carousel::-webkit-scrollbar { display: none; }
 .earth99-car { flex: none; display: flex; align-items: center; gap: 6px; padding: 7px 11px; border-radius: 999px;
   border: 1px solid rgba(255,255,255,.22); background: rgba(255,255,255,.09); -webkit-backdrop-filter: blur(10px);

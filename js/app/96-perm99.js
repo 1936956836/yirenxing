@@ -304,6 +304,7 @@ Object.assign(App, {
     { k: 'overlay', ico: '🪟', n: '悬浮窗权限', tag: '关键', d: '聚神锁机页面、悬浮提醒的显示基础' },
     { k: 'usage',   ico: '📊', n: '使用量权限', tag: '关键', d: '查看各 App 使用情况，对 App 进行监督和记录——四魔自动执法的数据来源' },
     { k: 'notif',   ico: '🔔', n: '通知栏权限', tag: '',     d: '任务状态通知、利于保持后台稳定运行' },
+    { k: 'mic',     ico: '🎤', n: '话筒权限',   tag: '',     d: '独行表达等语音功能的录音使用——仅在你使用语音时采集，不录音不上传' },
     { k: 'battery', ico: '🔋', n: '电池不优化', tag: '',     d: '加入省电白名单，防止后台被系统清理，提醒准时到达' },
     { k: 'applist', ico: '📋', n: '读取应用列表', tag: '关键', d: '识别娱乐 App（抖音/B站/游戏等），四魔执法更精准' },
   ],
@@ -324,7 +325,8 @@ Object.assign(App, {
     if (!v) return;
     const sfxOn = this._sfx99On();
     const st = this._perm99St || {};
-    const client = this._u99Available();
+    // v12.9.48 手机专属版：装机即手机环境，默认按客户端对待（权限直跳，不再按网页版降级）
+    const client = this._u99Available() || !!window.__PHONE_EDITION__;
     const cards = this.PERM99.map(p => {
       const on = !!st[p.k];
       return `<div class="perm99-card ${on ? 'on' : ''}" id="perm99card-${p.k}">
@@ -395,7 +397,8 @@ Object.assign(App, {
         if (!k) return;
         // v12.9.46b 权限内容全端开放（用户规则）：仅手机/平板客户端执行跳转系统设置；
         //   网页版不执行——按一下给说明提示，开关保持原状
-        if (!this._u99Available()) {
+        // v12.9.48 手机专属版（__PHONE_EDITION__）默认手机环境：同客户端待遇
+        if (!this._u99Available() && !window.__PHONE_EDITION__) {
           this._sfx99('back');
           this._flash('🌐 网页版无需授权——安装一人行客户端（手机/平板）后，点这里可跳转对应系统设置页');
           return;
@@ -416,8 +419,16 @@ Object.assign(App, {
   },
 
   async _perm99Open(k) {
-    try { await this._u99Bridge().openPermPage({ perm: k }); }
-    catch (e) { this._flash('❌ 无法打开系统设置——请手动前往系统设置授权'); }
+    // v12.9.48 修复手机端「点了没反应」：此前 Java 侧异常被吞成 {ok:false}，JS 又不检查返回值 → 静默失败。
+    //   现在逐项检查：失败给明确提示（Java 侧已加兜底回退到应用详情页，基本不会再失败）。
+    try {
+      const r = await this._u99Bridge().openPermPage({ perm: k });
+      if (r && r.ok === false) {
+        this._flash('❌ ' + (r.err ? ('设置页打开失败：' + String(r.err).slice(0, 60)) : '无法打开系统设置——请手动前往 系统设置→应用→一人行 授权'));
+        return;
+      }
+      this._flash('已跳转系统设置——授权后返回一人行，这里会自动复检 ✅');
+    } catch (e) { this._flash('❌ 无法打开系统设置——请手动前往 系统设置→应用→一人行 授权'); }
   },
 
   async _perm99Refresh(silent) {

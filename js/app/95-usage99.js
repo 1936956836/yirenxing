@@ -14,7 +14,9 @@
 //   部署 deploy-netlify/ 后，该站点下有 apk-manifest.json + apk/yirenxing-v*.apk，
 //   App 打开时自动拉清单比对版本 → 弹窗 → 应用内下载 → 系统安装器覆盖安装。
 //   可用 localStorage.apk99_feed 覆盖（换托管域名无需重出包）。
-const APK99_FEED = 'https://yirenxing.netlify.app';   // 更新源（部署站点根地址，不带末尾斜杠）
+// v12.9.48 更新源切换：Netlify 免费额度耗尽不再可靠 → GitHub 仓库 raw 直链（永久免费 · CORS 全开）
+//   旧版 App 内置 netlify 源仍可用（额度过月重置）；新版装机起走 GitHub
+const APK99_FEED = 'https://raw.githubusercontent.com/1936956836/yirenxing/main';   // 更新源（仓库 raw 根，不带末尾斜杠）
 
 Object.assign(App, {
   // ==================== 桥接状态 ====================

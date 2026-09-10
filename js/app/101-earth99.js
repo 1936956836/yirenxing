@@ -182,6 +182,8 @@ Object.assign(App, {
     this._earth99PaintCar();
     this._earth99Resize();
     this._earth99BindCanvas();
+    [300, 1000].forEach(ms => setTimeout(() => { try { this._earth99Resize(); } catch (e) {} }, ms));   // 动画结束补测
+    this._earth99WatchStage();
     this._earth99CardEra(this._earth99EraDef(this._earth99Rt.era));
     this._earth99Loop(performance.now());
     if (!this._earth99Rt.live.liveTried) { this._earth99Rt.live.liveTried = true; this._earth99Live(); }
@@ -282,10 +284,25 @@ Object.assign(App, {
     if (!cv || !st) return;
     const dpr = Math.min(2, window.devicePixelRatio || 1);
     const w = st.clientWidth || 320, h = st.clientHeight || 480;
+    const rt = this._earth99Rt;
+    if (rt && rt.W === w && rt.H === h && rt.cx && cv.width) return;   // 尺寸未变不重置（防重复 scale）
     cv.width = w * dpr; cv.height = h * dpr;
     cv.style.width = w + 'px'; cv.style.height = h + 'px';
-    const rt = this._earth99Rt;
-    if (rt) { rt.cx = cv.getContext('2d'); rt.cx.scale(dpr, dpr); rt.W = w; rt.H = h; }
+    if (rt) { rt.cx = cv.getContext('2d'); rt.cx.setTransform(dpr, 0, 0, dpr, 0, 0); rt.W = w; rt.H = h; }
+  },
+  // v12.9.48 手机全屏修复：入场动画期间 view 带 transform，fixed 舞台会取错包含块（342×0 → 高走 480 兜底），
+  // 且动画结束后不再有 resize 事件 → 画布永久卡在半屏。动画后补测两轮 + ResizeObserver 盯舞台尺寸变化。
+  _earth99WatchStage() {
+    try {
+      if (this.__e99RO) { try { this.__e99RO.disconnect(); } catch (e) {} this.__e99RO = null; }
+      const st = document.getElementById('earth99Stage');
+      if (st && window.ResizeObserver) {
+        this.__e99RO = new ResizeObserver(() => {
+          if (App.currentView === 'earth99') { try { App._earth99Resize(); } catch (e) {} }
+        });
+        this.__e99RO.observe(st);
+      }
+    } catch (e) {}
   },
 
   _earth99BindCanvas() {

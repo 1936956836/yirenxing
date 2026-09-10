@@ -12,8 +12,8 @@
   <link rel="manifest" href="manifest.json">
   <link rel="apple-touch-icon" href="icons/icon-1024.jpg">
   <link rel="icon" type="image/svg+xml" href="icons/icon.svg">
-  <title>一人行 v12.9.47</title>
-  <link rel="stylesheet" href="css/styles.css?v=12.9.47">
+  <title>一人行 v12.9.48</title>
+  <link rel="stylesheet" href="css/styles.css?v=12.9.48">
   <script>
     // v2026.0905c 手机端崩溃修复①：必须在所有模块脚本之前注册（capture 阶段）——
     // 记录加载失败的 js 文件（存完整路径）。此前任何模块 404/网络抖动时 App 仍"半启动"（00-core 已定义），
@@ -36,7 +36,7 @@
     </div>
     <div class="splash99-title">一人行</div>
     <div class="splash99-slogan">一个人也能好好生活</div>
-    <span class="splash99-ver">v12.7</span>
+    <span class="splash99-ver" id="splash99Ver">v12.9.48</span>
   </div>
   <script>
   (function () {
@@ -90,6 +90,14 @@
       }
       var t = setTimeout(dismiss, 2000);
       if (splash) splash.addEventListener('click', function () { clearTimeout(t); dismiss(); });
+      // v12.9.48 开屏版本号与 js/version.js 同源同步（此前写死 v12.7 永不更新）；手机专属版加标注
+      try {
+        window.addEventListener('DOMContentLoaded', function () {
+          var el = document.getElementById('splash99Ver');
+          var V = window.__APP_VER__ || {};
+          if (el && V.v) el.textContent = 'v' + V.v + (window.__PHONE_EDITION__ ? ' · 手机专属版' + (V.phoneV ? ' ' + V.phoneV : '') : '');
+        });
+      } catch (e) {}
     } catch (e) {}
   })();
   </script>

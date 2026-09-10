@@ -25,10 +25,15 @@ Object.assign(App, {
 
   // ==================== 常量 ====================
   // 长视频片库聚合（苹果CMS JSON · 免 key · 多源容灾：直连失败走公共 CORS 代理链）
+  // v12.9.48 资源装载扩展（libretv 同源公开 CMS 接口 · 实测筛选）：新增 电影天堂/百度/360 三源（七源并发），
+  //   综艺新番覆盖大幅提升（花儿与少年全季 / 披荆斩棘等）；排前的源实测响应快，供增量渲染先出结果
   VIDEO99_SITES: [
     { n: '量子源', u: 'https://cj.lziapi.com/api.php/provide/vod/' },
-    { n: '卧龙源', u: 'https://collect.wolongzy.cc/api.php/provide/vod/' },
     { n: '非凡源', u: 'https://api.ffzyapi.com/api.php/provide/vod/' },
+    { n: '电影天堂', u: 'https://caiji.dyttzyapi.com/api.php/provide/vod/' },
+    { n: '百度源', u: 'https://api.apibdzy.com/api.php/provide/vod/' },
+    { n: '360源', u: 'https://360zy.com/api.php/provide/vod/' },
+    { n: '卧龙源', u: 'https://collect.wolongzy.cc/api.php/provide/vod/' },
     { n: '暴风源', u: 'https://bfzy.tv/api.php/provide/vod/' },
   ],
   // 三重公共 CORS 代理链（任一成功即用 · 与独行音乐同款）
@@ -328,21 +333,28 @@ Object.assign(App, {
     }
   },
 
-  // 直连 → 三重代理链（任一成功即用）
+  // v12.9.48 引擎提速：直连 + 三代理「并发竞速，先回先得」（此前串行重试最坏 4×9s；
+  //   现在所有通道同时出发，最快的那个赢，单源最坏 7s 封顶，配合增量渲染先到的结果先上屏）
   async _video99Fetch(u, ms) {
     const tries = [u].concat(this.VIDEO99_PROXY.map(p => p(u)));
-    for (const t of tries) {
+    const one = async (t) => {
+      const ctrl = new AbortController();
+      const to = setTimeout(() => { try { ctrl.abort(); } catch (e) {} }, ms || 7000);
       try {
-        const ctrl = new AbortController();
-        const to = setTimeout(() => { try { ctrl.abort(); } catch (e) {} }, ms || 9000);
         const res = await fetch(t, { signal: ctrl.signal });
-        clearTimeout(to);
-        if (!res || !res.ok) continue;
-        const j = await res.json();
-        if (j) return j;
-      } catch (e) {}
-    }
-    return null;
+        if (!res || !res.ok) return null;
+        return await res.json();
+      } catch (e) { return null; }
+      finally { clearTimeout(to); }
+    };
+    return new Promise((ok) => {
+      let settled = false, left = tries.length;
+      tries.forEach(t => {
+        one(t).then(j => {
+          if (!settled && j) { settled = true; ok(j); }
+        }).finally(() => { if (--left === 0 && !settled) ok(null); });
+      });
+    });
   },
 
   async _video99Search(kw) {
@@ -364,7 +376,7 @@ Object.assign(App, {
       if (rt.tab === 'search' && rt.searching) this._video99Paint();
     };
     await Promise.all(this.VIDEO99_SITES.map(async (s) => {
-      const j = await this._video99Fetch(s.u + '?ac=detail&wd=' + encodeURIComponent(kw), 9000);
+      const j = await this._video99Fetch(s.u + '?ac=detail&wd=' + encodeURIComponent(kw), 7000);
       add(j && j.list);
     }));
     rt.searching = false;

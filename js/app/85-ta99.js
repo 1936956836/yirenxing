@@ -44,88 +44,108 @@ revoke execute on function public.ta99_claim(text) from anon, public;
 grant execute on function public.ta99_claim(text) to authenticated;
 notify pgrst, 'reload schema';`,
 
-  TA99_SQL: `-- 一人行 ·【Ta】情侣空间 · 自动搭建器（开发者执行一次即可，之后所有用户自动搭建）
--- 一次性把 ta99_init() 函数本身建好；之后 App 检测到表缺失时自动调用此函数完成全部搭建
--- v12.9.47b：① 开头先 DROP 再 CREATE 修复版 ta99_claim（老库粘贴这段 SQL 即修复——OR REPLACE 改不了参数名）；② ta99_init 每次调用都 DROP+CREATE 刷新 RPC 函数（幂等升级，不动数据）
-drop function if exists public.ta99_claim(text);
-create function public.ta99_claim(p_code text) returns json
-language plpgsql security definer set search_path = public as $f$
-declare inv record; me uuid := auth.uid();
-begin
-  if me is null then return json_build_object('ok', false, 'msg', '请先登录'); end if;
-  select * into inv from public.invites99 where public.invites99.code = upper(p_code) for update;
-  if not found then return json_build_object('ok', false, 'msg', '邀请码不存在'); end if;
-  if inv.owner = me then return json_build_object('ok', false, 'msg', '这是你自己的邀请码——要输入Ta的'); end if;
-  if inv.claimed_by is not null then return json_build_object('ok', false, 'msg', '邀请码已被使用'); end if;
-  if exists (select 1 from public.couples99 where user_a = me or user_b = me) then return json_build_object('ok', false, 'msg', '你已有另一半'); end if;
-  if exists (select 1 from public.couples99 where user_a = inv.owner or user_b = inv.owner) then return json_build_object('ok', false, 'msg', '对方已绑定他人'); end if;
-  update public.invites99 set claimed_by = me where public.invites99.code = inv.code;
-  insert into public.couples99 (user_a, user_b, since) values (inv.owner, me, current_date);
-  return json_build_object('ok', true);
-end $f$;
-revoke execute on function public.ta99_claim(text) from anon, public;
-grant execute on function public.ta99_claim(text) to authenticated;
-
-create or replace function public.ta99_init() returns json
+  // v12.9.48 终极升级包：邮箱直绑（ta99_bind/accept/deny + bindreq99 表）+ 自升级器 ta99_upgrade()
+  // —— 这是【最后一次】需要手动执行的 SQL：今后情侣空间新功能全部走 couples99.extra 扩展位，
+  //    不再改云端表结构；App 检测到缺件时会自动调用 ta99_upgrade() 补齐，无需再粘贴任何 SQL。
+  TA99_SQL: `-- 一人行 ·【Ta】情侣空间 · 终极升级 v12.9.48（最后一次手动执行 SQL）
+-- ① 修复邀请码函数；② 新增「邮箱直绑」：输Ta的邮箱发起 → Ta点「接受」→ 绑定完成（邀请码降为备用）
+-- ③ 自升级器：App 以后检测到云端缺件时自动调用 ta99_upgrade() 补齐，无需再手动执行 SQL
+create or replace function public.ta99_upgrade() returns json
 language plpgsql security definer set search_path = public as $$
 declare cnt int;
 begin
-  -- 幂等检查：表已存在则跳过建表（避免覆盖数据）；RPC 函数仍在下方 create or replace 自刷新——老库自动升级到修复版
-  select count(*) into cnt from information_schema.tables
-    where table_schema = 'public' and table_name = 'invites99';
+  -- ① 基础两表（已存在则跳过，不动数据）
+  select count(*) into cnt from information_schema.tables where table_schema = 'public' and table_name = 'invites99';
   if cnt = 0 then
-
-  -- 建表 invites99
-  execute 'create table public.invites99 (
-    code text primary key,
-    owner uuid not null references auth.users on delete cascade,
-    claimed_by uuid references auth.users on delete cascade,
-    created_at timestamptz not null default now()
-  )';
-  execute 'alter table public.invites99 enable row level security';
-  execute 'drop policy if exists "inv_own" on public.invites99';
-  execute 'create policy "inv_own" on public.invites99 for all to authenticated using (auth.uid() = owner) with check (auth.uid() = owner)';
-
-  -- 建表 couples99
-  execute 'create table public.couples99 (
-    id uuid primary key default gen_random_uuid(),
-    user_a uuid not null references auth.users on delete cascade,
-    user_b uuid not null references auth.users on delete cascade,
-    since date,
-    share_a jsonb,
-    share_b jsonb,
-    extra jsonb,
-    updated_at timestamptz not null default now()
-  )';
-  execute 'alter table public.couples99 enable row level security';
-  execute 'drop policy if exists "cpl_member" on public.couples99';
-  execute 'create policy "cpl_member" on public.couples99 for all to authenticated using (auth.uid() = user_a or auth.uid() = user_b) with check (auth.uid() = user_a or auth.uid() = user_b)';
+    execute 'create table public.invites99 (
+      code text primary key,
+      owner uuid not null references auth.users on delete cascade,
+      claimed_by uuid references auth.users on delete cascade,
+      created_at timestamptz not null default now()
+    )';
+    execute 'alter table public.invites99 enable row level security';
+    execute 'drop policy if exists "inv_own" on public.invites99';
+    execute 'create policy "inv_own" on public.invites99 for all to authenticated using (auth.uid() = owner) with check (auth.uid() = owner)';
+    execute 'create table public.couples99 (
+      id uuid primary key default gen_random_uuid(),
+      user_a uuid not null references auth.users on delete cascade,
+      user_b uuid not null references auth.users on delete cascade,
+      since date,
+      share_a jsonb,
+      share_b jsonb,
+      extra jsonb,
+      updated_at timestamptz not null default now()
+    )';
+    execute 'alter table public.couples99 enable row level security';
+    execute 'drop policy if exists "cpl_member" on public.couples99';
+    execute 'create policy "cpl_member" on public.couples99 for all to authenticated using (auth.uid() = user_a or auth.uid() = user_b) with check (auth.uid() = user_a or auth.uid() = user_b)';
   end if;
 
-  -- 建 RPC 函数（v12.9.47b：先 DROP 再 CREATE——OR REPLACE 无法改参数名 code→p_code，老库会撞 42P13）
+  -- ② 邀请码函数（DROP 后重建：参数名 code→p_code，OR REPLACE 不允许改名）
   execute 'drop function if exists public.ta99_claim(text)';
   execute 'create function public.ta99_claim(p_code text) returns json language plpgsql security definer set search_path = public as $f$ declare inv record; me uuid := auth.uid(); begin if me is null then return json_build_object(''ok'', false, ''msg'', ''请先登录''); end if; select * into inv from public.invites99 where public.invites99.code = upper(p_code) for update; if not found then return json_build_object(''ok'', false, ''msg'', ''邀请码不存在''); end if; if inv.owner = me then return json_build_object(''ok'', false, ''msg'', ''这是你自己的邀请码——要输入Ta的''); end if; if inv.claimed_by is not null then return json_build_object(''ok'', false, ''msg'', ''邀请码已被使用''); end if; if exists (select 1 from public.couples99 where user_a = me or user_b = me) then return json_build_object(''ok'', false, ''msg'', ''你已有另一半''); end if; if exists (select 1 from public.couples99 where user_a = inv.owner or user_b = inv.owner) then return json_build_object(''ok'', false, ''msg'', ''对方已绑定他人''); end if; update public.invites99 set claimed_by = me where public.invites99.code = inv.code; insert into public.couples99 (user_a, user_b, since) values (inv.owner, me, current_date); return json_build_object(''ok'', true); end $f$';
 
+  -- ③ 绑定请求表（邮箱直绑的核心：from 发起人 · to 接收人 · note 发起人邮箱 · to_email 对方邮箱）
+  select count(*) into cnt from information_schema.tables where table_schema = 'public' and table_name = 'bindreq99';
+  if cnt = 0 then
+    execute 'create table public.bindreq99 (
+      id uuid primary key default gen_random_uuid(),
+      from_user uuid not null references auth.users on delete cascade,
+      to_user uuid not null references auth.users on delete cascade,
+      note text,
+      to_email text,
+      created_at timestamptz not null default now()
+    )';
+    execute 'alter table public.bindreq99 enable row level security';
+  end if;
+  execute 'drop policy if exists "bindreq_rw" on public.bindreq99';
+  execute 'create policy "bindreq_rw" on public.bindreq99 for all to authenticated using (auth.uid() = from_user or auth.uid() = to_user) with check (auth.uid() = from_user)';
+
+  -- ④ 邮箱直绑三函数
+  execute 'create or replace function public.ta99_bind(p_email text) returns json language plpgsql security definer set search_path = public as $f$ declare me uuid := auth.uid(); partner uuid; mymail text; begin if me is null then return json_build_object(''ok'', false, ''msg'', ''请先登录''); end if; select id, email into partner, mymail from auth.users where lower(email) = lower(btrim(p_email)) limit 1; if partner is null then return json_build_object(''ok'', false, ''msg'', ''这个邮箱还没有注册一人行云账号——让Ta先用这个邮箱注册并登录一次''); end if; if partner = me then return json_build_object(''ok'', false, ''msg'', ''不能绑定自己哦''); end if; if exists (select 1 from public.couples99 where user_a = me or user_b = me) then return json_build_object(''ok'', false, ''msg'', ''你已有另一半''); end if; if exists (select 1 from public.couples99 where user_a = partner or user_b = partner) then return json_build_object(''ok'', false, ''msg'', ''对方已绑定他人''); end if; delete from public.bindreq99 where from_user = me or to_user = me or to_user = partner or from_user = partner; insert into public.bindreq99 (from_user, to_user, note, to_email) values (me, partner, mymail, lower(btrim(p_email))); return json_build_object(''ok'', true); end $f$';
+  execute 'create or replace function public.ta99_accept(p_from uuid) returns json language plpgsql security definer set search_path = public as $f$ declare me uuid := auth.uid(); n int; begin if me is null then return json_build_object(''ok'', false, ''msg'', ''请先登录''); end if; delete from public.bindreq99 where from_user = p_from and to_user = me; get diagnostics n = row_count; if n = 0 then return json_build_object(''ok'', false, ''msg'', ''这条绑定请求已不存在（可能已被撤回）''); end if; if exists (select 1 from public.couples99 where user_a = me or user_b = me) then return json_build_object(''ok'', false, ''msg'', ''你已有另一半''); end if; if exists (select 1 from public.couples99 where user_a = p_from or user_b = p_from) then return json_build_object(''ok'', false, ''msg'', ''对方已绑定他人''); end if; insert into public.couples99 (user_a, user_b, since) values (p_from, me, current_date); delete from public.bindreq99 where from_user in (me, p_from) or to_user in (me, p_from); return json_build_object(''ok'', true); end $f$';
+  execute 'create or replace function public.ta99_deny(p_from uuid) returns json language plpgsql security definer set search_path = public as $f$ declare me uuid := auth.uid(); begin if me is null then return json_build_object(''ok'', false, ''msg'', ''请先登录''); end if; delete from public.bindreq99 where from_user = p_from and to_user = me; return json_build_object(''ok'', true); end $f$';
+
+  -- ⑤ 写入 / 解绑照旧刷新一遍
   execute 'create or replace function public.ta99_write(target text, data jsonb) returns json language plpgsql security definer set search_path = public as $f$ declare me uuid := auth.uid(); n int; begin if me is null then return json_build_object(''ok'', false, ''msg'', ''请先登录''); end if; if target = ''share_a'' then update public.couples99 set share_a = data, updated_at = now() where user_a = me; elsif target = ''share_b'' then update public.couples99 set share_b = data, updated_at = now() where user_b = me; elsif target = ''extra'' then update public.couples99 set extra = data, updated_at = now() where user_a = me or user_b = me; elsif target = ''since'' then update public.couples99 set since = (data ->> ''d'')::date, updated_at = now() where user_a = me or user_b = me; else return json_build_object(''ok'', false, ''msg'', ''参数不对''); end if; get diagnostics n = row_count; if n = 0 then return json_build_object(''ok'', false, ''msg'', ''还没绑定另一半''); end if; return json_build_object(''ok'', true); end $f$';
+  execute 'create or replace function public.ta99_leave() returns json language plpgsql security definer set search_path = public as $f$ declare me uuid := auth.uid(); n int; begin if me is null then return json_build_object(''ok'', false, ''msg'', ''请先登录''); end if; delete from public.couples99 where user_a = me or user_b = me; get diagnostics n = row_count; delete from public.invites99 where owner = me; delete from public.bindreq99 where from_user = me or to_user = me; return json_build_object(''ok'', n > 0); end $f$';
 
-  execute 'create or replace function public.ta99_leave() returns json language plpgsql security definer set search_path = public as $f$ declare me uuid := auth.uid(); n int; begin if me is null then return json_build_object(''ok'', false, ''msg'', ''请先登录''); end if; delete from public.couples99 where user_a = me or user_b = me; get diagnostics n = row_count; delete from public.invites99 where owner = me; return json_build_object(''ok'', n > 0); end $f$';
-
+  -- ⑥ 权限收紧（anon/public 一律不可执行）
   execute 'revoke execute on function public.ta99_claim(text) from anon, public';
   execute 'revoke execute on function public.ta99_write(text, jsonb) from anon, public';
   execute 'revoke execute on function public.ta99_leave() from anon, public';
+  execute 'revoke execute on function public.ta99_bind(text) from anon, public';
+  execute 'revoke execute on function public.ta99_accept(uuid) from anon, public';
+  execute 'revoke execute on function public.ta99_deny(uuid) from anon, public';
   execute 'grant execute on function public.ta99_claim(text) to authenticated';
   execute 'grant execute on function public.ta99_write(text, jsonb) to authenticated';
   execute 'grant execute on function public.ta99_leave() to authenticated';
+  execute 'grant execute on function public.ta99_bind(text) to authenticated';
+  execute 'grant execute on function public.ta99_accept(uuid) to authenticated';
+  execute 'grant execute on function public.ta99_deny(uuid) to authenticated';
 
-  return json_build_object('ok', true, 'created', cnt = 0, 'msg', case when cnt = 0 then 'initialized' else 'upgraded' end);
+  notify pgrst, 'reload schema';
+  return json_build_object('ok', true, 'v', '12.9.48');
 end $$;
 
-revoke all on function public.ta99_init() from anon, public;
-grant execute on function public.ta99_init() to authenticated;`,
+-- ta99_init 变成升级器入口（老 App 调 init 也自动走升级，一个入口两代 App 通用）
+create or replace function public.ta99_init() returns json
+language plpgsql security definer set search_path = public as $$
+begin
+  return public.ta99_upgrade();
+end $$;
 
-  // 精简提示 SQL（仅当 ta99_init 函数本身也不存在时显示给开发者 · 一次即可）
+revoke all on function public.ta99_upgrade() from anon, public;
+grant execute on function public.ta99_upgrade() to authenticated;
+revoke all on function public.ta99_init() from anon, public;
+grant execute on function public.ta99_init() to authenticated;
+
+-- 立即执行：把当前库升到 v12.9.48（幂等，可重复执行，不动任何数据）
+select public.ta99_upgrade();`,
+
+  // 精简提示 SQL（仅当云端连自升级器都没有时显示 · 这是最后一次）
   TA99_INIT_HINT:
-    '检测到【Ta】自动搭建函数 ta99_init() 还未部署——请到 Supabase SQL Editor 执行下方 SQL 一次（仅此一次），之后所有终端用户首次进入【Ta】时自动搭建完成。',
+    '检测到云端还没有【Ta】的升级组件——请到 Supabase SQL Editor 执行下方 SQL 一次（这是最后一次手动执行），之后所有升级 App 会自动完成。',
 
   // ===== v12.9.22 每日一问题库（克制温和 · 按日期确定性选题：两人同一天看到同一题）=====
   TA99_QA_BANK: [
@@ -168,8 +188,41 @@ grant execute on function public.ta99_init() to authenticated;`,
 
   // ==================== 主入口 ====================
   _wbTa99(wb, W) {
-    this.ta99Refresh(); // 异步拉取云端（邀请码/情侣行），完成后局部刷新 #ta99-body
+    this.ta99Refresh(); // 异步拉取云端（邀请码/情侣行/绑定请求），完成后局部刷新 #ta99-body
+    this._ta99Poll();   // v12.9.48 轻轮询：对方发起绑定 / 接受时自动出现，不用手动刷新
     return `<div id="ta99-body">${this._ta99Render()}</div>`;
+  },
+  // v12.9.48 绑定轻轮询（20s）：只查绑定状态，变化才局部重绘；正在输入邮箱/邀请码时跳过本轮
+  _ta99Poll() {
+    clearInterval(this.__ta99PollInt);
+    this.__ta99PollInt = setInterval(async () => {
+      const c = this._c99, t = this._ta99;
+      if (!document.getElementById('ta99-body') || !c || !c.client || !c.user) return;
+      if (t.row) { clearInterval(this.__ta99PollInt); return; }
+      try {
+        const ae = document.activeElement;
+        if (ae && (ae.id === 'ta99-email-in' || ae.id === 'ta99-code-in')) return;
+        const { data: reqs, error } = await c.client.from('bindreq99')
+          .select('id, from_user, to_user, note, to_email, created_at')
+          .or(`from_user.eq.${c.user.id},to_user.eq.${c.user.id}`)
+          .order('created_at', { ascending: false }).limit(5);
+        if (error) return;
+        const bindIn = (reqs || []).find(r => r.to_user === c.user.id) || null;
+        const bindOut = (!bindIn && (reqs || []).find(r => r.from_user === c.user.id)) || null;
+        const sig = JSON.stringify([bindIn, bindOut]);
+        if (sig !== t.__bindSig || t.needUpgrade) {
+          t.__bindSig = sig;
+          t.bindIn = bindIn;
+          t.bindOut = bindOut;
+          t.needUpgrade = false;
+          this._ta99Rerender();
+        }
+        // 对方已接受：情侣行出现 → 停轮询，全量刷新进已绑定视图
+        const { data: row } = await c.client.from('couples99').select('id')
+          .or(`user_a.eq.${c.user.id},user_b.eq.${c.user.id}`).maybeSingle();
+        if (row) { clearInterval(this.__ta99PollInt); await this.ta99Refresh(true); }
+      } catch (e) {}
+    }, 20000);
   },
   _ta99Render() {
     const c = this._c99;
@@ -238,6 +291,28 @@ grant execute on function public.ta99_init() to authenticated;`,
       } else {
         t.msg = '';
       }
+      // v12.9.48 邮箱直绑：拉取绑定请求（我收到的 bindIn / 我发出的 bindOut）
+      let bindIn = null, bindOut = null;
+      const { data: reqs, error: e3 } = await c.client.from('bindreq99')
+        .select('id, from_user, to_user, note, to_email, created_at')
+        .or(`from_user.eq.${c.user.id},to_user.eq.${c.user.id}`)
+        .order('created_at', { ascending: false }).limit(5);
+      if (!e3 && reqs) {
+        bindIn = reqs.find(r => r.to_user === c.user.id) || null;
+        bindOut = (!bindIn && reqs.find(r => r.from_user === c.user.id)) || null;
+      }
+      if (e3 && missT(e3.message)) {
+        // 云端缺新表：先试自升级器（老库连升级器都没有 → 显示「最后一次 SQL」卡片）
+        if (!t.__upTry) {
+          t.__upTry = 1;
+          const { error: ue } = await c.client.rpc('ta99_upgrade');
+          if (!ue) { t.__upTry = 0; await this.ta99Refresh(true); return; }
+          if (missT(ue.message)) t.needUpgrade = true;
+        } else t.needUpgrade = true;
+      } else t.needUpgrade = false;
+      t.bindIn = bindIn;
+      t.bindOut = bindOut;
+      t.__bindSig = JSON.stringify([bindIn, bindOut]);
       t.row = row || null;
       t.invite = invite;
       // v12.9.38 旧版残留邀请码自动换代：云端若还挂着旧版生成的「字母+数字」码（新版输入框只收 6 位数字
@@ -391,6 +466,46 @@ grant execute on function public.ta99_init() to authenticated;`,
         { label: '知道了', primary: true },
       ]);
   },
+  // —— v12.9.48 邮箱直绑动作 ——
+  async ta99BindEmail() {
+    const c = this._c99;
+    if (!c || !c.client || !c.user) return;
+    const el = document.getElementById('ta99-email-in');
+    const email = String((el && el.value) || '').trim();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return this._ta99Msg('❌ 邮箱格式不对——填Ta登录一人行用的那个邮箱');
+    this._ta99Msg('💌 正在发起…');
+    const r = await this._ta99Rpc('ta99_bind', { p_email: email });
+    if (r && r.ok) {
+      await this.ta99Refresh(true);
+      this._flash('💌 已发起——等Ta打开一人行的【Ta】点「接受」');
+    } else if (r && r.msg) this._ta99Msg('❌ ' + r.msg);
+  },
+  async ta99AcceptEmail(from) {
+    const r = await this._ta99Rpc('ta99_accept', { p_from: from });
+    if (r && r.ok) {
+      this._ta99.msg = '';
+      this._flash('💞 绑定成功！欢迎来到你们的空间');
+      await this.ta99Refresh(true);
+    } else if (r && r.msg) this._ta99Msg('❌ ' + r.msg);
+  },
+  async ta99DenyEmail(from) {
+    const r = await this._ta99Rpc('ta99_deny', { p_from: from });
+    if (r && r.ok) {
+      this._ta99.msg = '';
+      await this.ta99Refresh(true);
+      this._flash('已婉拒这条绑定请求');
+    }
+  },
+  async ta99WithdrawBind() {
+    const c = this._c99, t = this._ta99;
+    if (!c || !c.client || !t.bindOut) return;
+    try {
+      await c.client.from('bindreq99').delete().eq('id', t.bindOut.id);
+      await this.ta99Refresh(true);
+      this._flash('已撤回绑定请求');
+    } catch (e) { this._ta99Msg('❌ 网络异常：' + (e.message || '')); }
+  },
+
   async ta99Leave() {
     if (!confirm('确定解除绑定吗？\n\n你们的情侣空间数据（情侣签到 / 纪念日 / 互相设置的打卡）将从云端删除，且不可恢复。')) return;
     const r = await this._ta99Rpc('ta99_leave');
@@ -485,43 +600,73 @@ grant execute on function public.ta99_init() to authenticated;`,
     return `<div class="card ta99-hero">
       <div class="ta99-hero-cats">${this._pet99CatHtml({ px: 58 })}<span class="ta99-hero-heart">❤</span><span class="pxcat ta99-cat-r" style="width:58px;height:61.6px;background-size:calc(58px*8) 61.6px"></span></div>
       <div style="font-size:16px;font-weight:800;margin-top:14px">Ta · 情侣空间</div>
-      <div style="font-size:12.5px;color:#64748b;margin-top:6px;line-height:1.9">输入对方的邀请码，成为彼此的另一半<br>看见彼此的打卡 · 经济 · 医疗近况<br>一起签到连心，一起记你们的日子</div>
+      <div style="font-size:12.5px;color:#64748b;margin-top:6px;line-height:1.9">输入Ta的邮箱发起绑定，Ta点一下「接受」即成<br>看见彼此的打卡 · 经济 · 医疗近况<br>一起签到连心，一起记你们的日子</div>
       <button class="btn btn-primary" style="margin-top:14px" onclick="App.navigate('sync')">🔐 先去登录云账号</button>
       <div style="font-size:11.5px;color:#94a3b8;margin-top:8px">【Ta】需要云账号识别彼此（和【同步】是同一套账号，注册一次全 App 通用）</div>
     </div>`;
   },
 
   // ==================== 视图：未绑定 ====================
+  // v12.9.48 重构：邮箱直绑为主入口（输Ta的登录邮箱 → Ta点「接受」即完成），邀请码降为备用
   _ta99BindView() {
     const t = this._ta99;
     const inv = t.invite;
     const code = (inv && !inv.claimed_by && inv.code) || '';
+    const inReq = t.bindIn, outReq = t.bindOut;
     return `
+    ${inReq ? `
+    <div class="card" style="border:1.5px solid #fda4af;background:linear-gradient(180deg,#fff1f2,#fff)">
+      <div class="card-title"><span class="ico">💌</span>收到绑定请求</div>
+      <div style="font-size:13px;line-height:1.9;margin:4px 0 10px"><b>${this.esc(inReq.note || '一位用户')}</b> 想和你绑定情侣空间<br><small style="color:#94a3b8">认得这个邮箱再接受——绑定后彼此可见打卡 / 经济 / 医疗近况</small></div>
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-primary" style="background:linear-gradient(90deg,#e11d48,#fb7185);border:0" onclick="App.ta99AcceptEmail('${inReq.from_user}')">💞 接受</button>
+        <button class="btn btn-ghost" onclick="App.ta99DenyEmail('${inReq.from_user}')">婉拒</button>
+      </div>
+    </div>` : ''}
+    ${outReq ? `
+    <div class="card" style="border:1.5px solid #fecdd3">
+      <div class="card-title"><span class="ico">⏳</span>等待Ta确认</div>
+      <div style="font-size:12.5px;color:var(--text-soft);line-height:1.9">已向 <b>${this.esc(outReq.to_email || '对方')}</b> 发起绑定——等Ta打开一人行的【Ta】点「接受」就连上了。</div>
+      <button class="btn btn-ghost" style="margin-top:8px" onclick="App.ta99WithdrawBind()">↩ 撤回请求</button>
+    </div>` : ''}
+    ${!inReq && !outReq ? `
     <div class="card">
-      <div class="card-title"><span class="ico">💌</span>我的邀请码<span class="sub" style="font-size:11px;color:#94a3b8;margin-left:6px">发给Ta · Ta在【记录 → Ta】里输入并绑定</span></div>
-      ${code ? `
-        <div class="ta99-code">${this.esc(code)}</div>
-        <div style="display:flex;gap:8px;justify-content:center">
-          <button class="btn btn-primary" style="background:linear-gradient(90deg,#e11d48,#fb7185);border:0" onclick="App.ta99Copy()">📋 复制邀请码</button>
-          <button class="btn btn-ghost" onclick="App.ta99GenCode()">↻ 换一个</button>
-        </div>` : `
-        <div style="font-size:12.5px;color:var(--text-soft);line-height:1.8;margin:6px 0 10px">还没有邀请码——点下面的按钮生成一个，发给你的另一半。</div>
-        <div style="text-align:center"><button class="btn btn-primary" style="background:linear-gradient(90deg,#e11d48,#fb7185);border:0" onclick="App.ta99GenCode()">✨ 生成我的邀请码</button></div>`}
-    </div>
+      <div class="card-title"><span class="ico">💌</span>邮箱直绑<span class="sub" style="font-size:11px;color:#94a3b8;margin-left:6px">最快方式 · 不用邀请码</span></div>
+      <div style="font-size:12.5px;color:var(--text-soft);line-height:1.8;margin:2px 0 8px">输入 <b>Ta 登录一人行用的邮箱</b>，发起绑定——Ta那边点一下「接受」就完成。</div>
+      <div class="field" style="margin:6px 0 10px"><input id="ta99-email-in" class="input" type="email" placeholder="Ta的云账号邮箱" onkeydown="if(event.key==='Enter')App.ta99BindEmail()"></div>
+      <button class="btn btn-primary" style="background:linear-gradient(90deg,#e11d48,#fb7185);border:0" onclick="App.ta99BindEmail()">💌 发起绑定</button>
+      <div style="font-size:11.5px;color:#94a3b8;margin-top:8px;line-height:1.7">绑定后：可以看见彼此的打卡 / 经济 / 医疗近况（健康隐私永不上传）；情侣签到 · 纪念日 · 互相设置打卡。</div>
+    </div>` : ''}
+    ${t.needUpgrade ? `
+    <div class="card" style="border:1.5px solid #fde68a;background:#fffbeb">
+      <div class="card-title"><span class="ico">🛠️</span>云端升级（最后一次）</div>
+      <div style="font-size:12.5px;color:var(--text-soft);line-height:1.7">云端还没有「邮箱直绑」组件——复制下方 SQL 到 Supabase SQL Editor 执行一次即可，执行完回到这里自动出现邮箱直绑。
+        <a href="javascript:void(0)" style="color:#e11d48" onclick="App.ta99ToggleSQL()">展开 SQL</a></div>
+      <div style="font-size:12px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;border-radius:8px;padding:6px 10px;margin-top:8px;line-height:1.7">🔗 当前连接项目：<b>${this.esc(this._ta99Host())}</b> · SQL 必须在<b>这个项目</b>里执行</div>
+      <div id="ta99-sql" style="display:none"><pre class="c99-sql">${this.esc(this.TA99_SQL)}</pre></div>
+    </div>` : ''}
+    ${(t.msg && (t.msg.indexOf('首次部署') >= 0 || t.msg.indexOf('升级组件') >= 0)) && !t.needUpgrade ? `
     <div class="card">
-      <div class="card-title"><span class="ico">❤️</span>输入Ta的邀请码</div>
-      <div class="field" style="margin:6px 0 10px"><input id="ta99-code-in" class="input" inputmode="numeric" maxlength="6" placeholder="6 位数字" style="letter-spacing:4px;text-align:center;font-size:16px" onkeydown="if(event.key==='Enter')App.ta99Bind()"></div>
-      <button class="btn btn-primary" style="background:linear-gradient(90deg,#e11d48,#fb7185);border:0" onclick="App.ta99Bind()">💞 绑定</button>
-      <div style="font-size:11.5px;color:#94a3b8;margin-top:8px;line-height:1.7">绑定后：可以看见彼此的打卡 / 经济 / 医疗近况（健康隐私永不上传）；有需要两个人都签到的情侣签到；纪念日互相提醒；还能互相设置打卡。</div>
-    </div>
-    ${(t.msg && t.msg.indexOf('首次部署') >= 0) ? `
-    <div class="card">
-      <div class="card-title"><span class="ico">🛠️</span>首次部署<span class="sub" style="font-size:11px;color:#94a3b8;margin-left:6px">仅开发者执行一次</span></div>
-      <div style="font-size:12.5px;color:var(--text-soft);line-height:1.7">检测到自动搭建函数 <code>ta99_init()</code> 还未部署——复制下方 SQL 到 Supabase SQL Editor 执行一次即可，之后<b>所有用户</b>首次进入【Ta】时自动搭建完成，无需任何手动操作。
+      <div class="card-title"><span class="ico">🛠️</span>首次部署</div>
+      <div style="font-size:12.5px;color:var(--text-soft);line-height:1.7">检测到云端还没有【Ta】的搭建组件——复制下方 SQL 到 Supabase SQL Editor 执行一次即可。
         <a href="javascript:void(0)" style="color:#e11d48" onclick="App.ta99ToggleSQL()">展开 SQL</a></div>
       <div style="font-size:12px;color:#92400e;background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:6px 10px;margin-top:8px;line-height:1.7">🔗 当前连接项目：<b>${this.esc(this._ta99Host())}</b> · SQL 必须在<b>这个项目</b>里执行</div>
       <div id="ta99-sql" style="display:none"><pre class="c99-sql">${this.esc(this.TA99_SQL)}</pre></div>
-    </div>` : ''}`;
+    </div>` : ''}
+    <div class="card">
+      <div class="card-title"><span class="ico">🔢</span>备用：邀请码<span class="sub" style="font-size:11px;color:#94a3b8;margin-left:6px">邮箱直绑的备用方式</span></div>
+      ${code ? `
+        <div style="font-size:11.5px;color:#94a3b8;margin-bottom:6px">我的邀请码（发给Ta）：</div>
+        <div class="ta99-code">${this.esc(code)}</div>
+        <div style="display:flex;gap:8px;justify-content:center">
+          <button class="btn btn-primary" style="background:linear-gradient(90deg,#e11d48,#fb7185);border:0" onclick="App.ta99Copy()">📋 复制</button>
+          <button class="btn btn-ghost" onclick="App.ta99GenCode()">↻ 换一个</button>
+        </div>` : `
+        <div style="font-size:12.5px;color:var(--text-soft);line-height:1.8;margin:6px 0 10px">生成一个 6 位数字码发给Ta，Ta输入后绑定。</div>
+        <div style="text-align:center"><button class="btn btn-ghost" onclick="App.ta99GenCode()">✨ 生成邀请码</button></div>`}
+      <div class="field" style="margin:10px 0 8px"><input id="ta99-code-in" class="input" inputmode="numeric" maxlength="6" placeholder="输入Ta的邀请码（6 位数字）" style="letter-spacing:4px;text-align:center;font-size:16px" onkeydown="if(event.key==='Enter')App.ta99Bind()"></div>
+      <button class="btn btn-ghost" onclick="App.ta99Bind()">💞 用邀请码绑定</button>
+    </div>`;
   },
 
   // ==================== 视图：已绑定（主页 + 四张导航卡 + 子页）====================
