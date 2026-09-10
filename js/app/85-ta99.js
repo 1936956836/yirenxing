@@ -20,9 +20,12 @@ Object.assign(App, {
   // v12.9.47 邀请码绑定修复：老库 ta99_claim(code) 的参数名 code 与 invites99.code 列名冲突，
   //   PL/pgSQL 变量冲突默认直接报错（42702 column reference "code" is ambiguous）→ 输入对方邀请码必失败。
   //   修复：参数改名 p_code + 所有列引用全限定。此 SQL 在 Supabase SQL Editor 执行一次即全项目生效（不动任何数据）。
-  TA99_FIX_SQL: `-- 一人行 ·【Ta】邀请码绑定修复（v12.9.47）
--- 修复：输入对方邀请码报错 column reference "code" is ambiguous（参数名与列名冲突）
-create or replace function public.ta99_claim(p_code text) returns json
+  TA99_FIX_SQL: `-- 一人行 ·【Ta】邀请码绑定修复（v12.9.47b · 修正版）
+-- 修复：输入对方邀请码报错 column reference "code" is ambiguous（参数名与列名冲突）。
+-- ⚠️ v2 修正：PG 不允许 CREATE OR REPLACE 改参数名（42P13 cannot change name of input parameter），
+--    必须 DROP 后再 CREATE——本段已按此顺序写好，直接整段执行即可。
+drop function if exists public.ta99_claim(text);
+create function public.ta99_claim(p_code text) returns json
 language plpgsql security definer set search_path = public as $f$
 declare inv record; me uuid := auth.uid();
 begin
@@ -38,12 +41,14 @@ begin
   return json_build_object('ok', true);
 end $f$;
 revoke execute on function public.ta99_claim(text) from anon, public;
-grant execute on function public.ta99_claim(text) to authenticated;`,
+grant execute on function public.ta99_claim(text) to authenticated;
+notify pgrst, 'reload schema';`,
 
   TA99_SQL: `-- 一人行 ·【Ta】情侣空间 · 自动搭建器（开发者执行一次即可，之后所有用户自动搭建）
 -- 一次性把 ta99_init() 函数本身建好；之后 App 检测到表缺失时自动调用此函数完成全部搭建
--- v12.9.47：① 开头立即重建修复版 ta99_claim（老库粘贴这段 SQL 即修复）；② ta99_init 改为每次调用都 create or replace 刷新 RPC 函数（幂等升级，不动数据）
-create or replace function public.ta99_claim(p_code text) returns json
+-- v12.9.47b：① 开头先 DROP 再 CREATE 修复版 ta99_claim（老库粘贴这段 SQL 即修复——OR REPLACE 改不了参数名）；② ta99_init 每次调用都 DROP+CREATE 刷新 RPC 函数（幂等升级，不动数据）
+drop function if exists public.ta99_claim(text);
+create function public.ta99_claim(p_code text) returns json
 language plpgsql security definer set search_path = public as $f$
 declare inv record; me uuid := auth.uid();
 begin
@@ -97,8 +102,9 @@ begin
   execute 'create policy "cpl_member" on public.couples99 for all to authenticated using (auth.uid() = user_a or auth.uid() = user_b) with check (auth.uid() = user_a or auth.uid() = user_b)';
   end if;
 
-  -- 建 RPC 函数（v12.9.47 幂等 create or replace：每次调用 ta99_init 都刷新到最新版——修复参数名/列名冲突）
-  execute 'create or replace function public.ta99_claim(p_code text) returns json language plpgsql security definer set search_path = public as $f$ declare inv record; me uuid := auth.uid(); begin if me is null then return json_build_object(''ok'', false, ''msg'', ''请先登录''); end if; select * into inv from public.invites99 where public.invites99.code = upper(p_code) for update; if not found then return json_build_object(''ok'', false, ''msg'', ''邀请码不存在''); end if; if inv.owner = me then return json_build_object(''ok'', false, ''msg'', ''这是你自己的邀请码——要输入Ta的''); end if; if inv.claimed_by is not null then return json_build_object(''ok'', false, ''msg'', ''邀请码已被使用''); end if; if exists (select 1 from public.couples99 where user_a = me or user_b = me) then return json_build_object(''ok'', false, ''msg'', ''你已有另一半''); end if; if exists (select 1 from public.couples99 where user_a = inv.owner or user_b = inv.owner) then return json_build_object(''ok'', false, ''msg'', ''对方已绑定他人''); end if; update public.invites99 set claimed_by = me where public.invites99.code = inv.code; insert into public.couples99 (user_a, user_b, since) values (inv.owner, me, current_date); return json_build_object(''ok'', true); end $f$';
+  -- 建 RPC 函数（v12.9.47b：先 DROP 再 CREATE——OR REPLACE 无法改参数名 code→p_code，老库会撞 42P13）
+  execute 'drop function if exists public.ta99_claim(text)';
+  execute 'create function public.ta99_claim(p_code text) returns json language plpgsql security definer set search_path = public as $f$ declare inv record; me uuid := auth.uid(); begin if me is null then return json_build_object(''ok'', false, ''msg'', ''请先登录''); end if; select * into inv from public.invites99 where public.invites99.code = upper(p_code) for update; if not found then return json_build_object(''ok'', false, ''msg'', ''邀请码不存在''); end if; if inv.owner = me then return json_build_object(''ok'', false, ''msg'', ''这是你自己的邀请码——要输入Ta的''); end if; if inv.claimed_by is not null then return json_build_object(''ok'', false, ''msg'', ''邀请码已被使用''); end if; if exists (select 1 from public.couples99 where user_a = me or user_b = me) then return json_build_object(''ok'', false, ''msg'', ''你已有另一半''); end if; if exists (select 1 from public.couples99 where user_a = inv.owner or user_b = inv.owner) then return json_build_object(''ok'', false, ''msg'', ''对方已绑定他人''); end if; update public.invites99 set claimed_by = me where public.invites99.code = inv.code; insert into public.couples99 (user_a, user_b, since) values (inv.owner, me, current_date); return json_build_object(''ok'', true); end $f$';
 
   execute 'create or replace function public.ta99_write(target text, data jsonb) returns json language plpgsql security definer set search_path = public as $f$ declare me uuid := auth.uid(); n int; begin if me is null then return json_build_object(''ok'', false, ''msg'', ''请先登录''); end if; if target = ''share_a'' then update public.couples99 set share_a = data, updated_at = now() where user_a = me; elsif target = ''share_b'' then update public.couples99 set share_b = data, updated_at = now() where user_b = me; elsif target = ''extra'' then update public.couples99 set extra = data, updated_at = now() where user_a = me or user_b = me; elsif target = ''since'' then update public.couples99 set since = (data ->> ''d'')::date, updated_at = now() where user_a = me or user_b = me; else return json_build_object(''ok'', false, ''msg'', ''参数不对''); end if; get diagnostics n = row_count; if n = 0 then return json_build_object(''ok'', false, ''msg'', ''还没绑定另一半''); end if; return json_build_object(''ok'', true); end $f$';
 
