@@ -1,0 +1,19 @@
+# 依赖与工具（本仓库为纯静态站，正常无需安装任何依赖）
+node_modules/
+
+# Vercel CLI 本地状态
+.vercel/
+
+# 系统与日志
+.DS_Store
+Thumbs.db
+*.log
+*.pid
+
+# 编辑器
+.vscode/
+.idea/
+
+# 构建产物（单文件版可随时用 build.js 重新生成，不进仓库）
+一人行-单文件版.html
+life-journey.html

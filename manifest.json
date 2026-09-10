@@ -1,0 +1,33 @@
+{
+  "name": "一人行 · 日常生活管理",
+  "short_name": "一人行",
+  "description": "沉浸式日常生活管理：记录健康用药、睡眠、饮食、卫生、运动、学习，并戒除陋习。建立优秀的免疫系统，践行长期治疗与成长。",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#f0f4f8",
+  "theme_color": "#0d9488",
+  "lang": "zh-CN",
+  "categories": ["health", "lifestyle", "productivity"],
+  "icons": [
+    {
+      "src": "icons/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "icons/icon-1024.jpg",
+      "sizes": "1024x1024",
+      "type": "image/jpeg",
+      "purpose": "any"
+    },
+    {
+      "src": "icons/icon-1024.jpg",
+      "sizes": "1024x1024",
+      "type": "image/jpeg",
+      "purpose": "maskable"
+    }
+  ]
+}
