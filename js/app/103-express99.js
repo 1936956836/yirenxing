@@ -274,14 +274,15 @@ Object.assign(App, {
 
   _express99RecStart() {
     const rt = this._express99Rt;
-    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SR) {
-      this._flash('当前浏览器不支持语音识别——试试 ⌨️ 打字模式，分析一样全');
+    // v12.9.49 语音适配层 / v12.9.61 起：客户端走 Vosk 离线语音识别（95 层统一适配），网页版回落浏览器 SpeechRecognition
+    const sr = this._sr99Create ? this._sr99Create() : null;
+    if (!sr) {
+      this._flash(!!window.__PHONE_EDITION__ ? '语音识别启动失败——再点一次试试，或切 ⌨️ 打字模式' : '当前浏览器不支持语音识别——试试 ⌨️ 打字模式，分析一样全');
       this._express99TypeToggle();
       return;
     }
     try {
-      rt.sr = new SR();
+      rt.sr = sr;
       rt.sr.lang = 'zh-CN';                       // 中英混合识别
       rt.sr.continuous = true;
       rt.sr.interimResults = true;
@@ -291,7 +292,7 @@ Object.assign(App, {
         if (e && (e.error === 'not-allowed' || e.error === 'service-not-allowed')) {
           rt.recOn = false;
           this._express99PaintHero();
-          this._flash('🎤 麦克风权限被拒——请在浏览器地址栏允许麦克风后重试');
+          this._flash(this._mic99Tip ? this._mic99Tip() : '🎤 麦克风权限被拒');
         }
       };
       rt.sr.start();

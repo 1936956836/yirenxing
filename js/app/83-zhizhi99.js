@@ -70,7 +70,7 @@ Object.assign(App, {
         <div class="zz99-dial">${dial}</div>
         <div class="zz99-panel-foot">
           <span class="zz99-led" id="zz99Led"></span>
-          <span class="zz99-foot-txt">${this._zz99TtsOk() ? '🔊 本机支持语音播报：点电台自动朗读新闻' : '🔇 本机无语音合成，将以文字流播报'}</span>
+          <span class="zz99-foot-txt">${this._zz99TtsOk() ? '🔊 手机客户端：点电台用系统人声自动朗读新闻' : '🔇 语音播报为手机客户端专属——本机将以文字流播报'}</span>
         </div>
       </div>
       <div class="card" style="margin-top:16px">
@@ -214,8 +214,9 @@ Object.assign(App, {
           icon: '🌐', url: it.link || '',
           date: String(it.pubDate || '').slice(0, 16),
         }));
-        const data = { ok: true, ts: Date.now(), srcName: feed.srcName, items };
-        try { localStorage.setItem('zz99_cat_' + key, JSON.stringify(data)); } catch (e) {}
+        const data = { ok: true, ts: Date.now(), srcName: feed.srcName, items, __fetched: true };
+        // v12.9.56 __fetched 标记不落盘（仅本次调用可见：真拉了网络才触发收音机重渲染）
+        try { const persist = Object.assign({}, data); delete persist.__fetched; localStorage.setItem('zz99_cat_' + key, JSON.stringify(persist)); } catch (e) {}
         return data;
       }
       throw new Error('bad payload');
@@ -225,9 +226,18 @@ Object.assign(App, {
     }
   },
   // 静默刷新当前台（force=绕过 TTL 立即拉）：到达后若仍在该台自动重渲染
+  // v12.9.56 卡死根治（重入守卫）：_wbZhizhi99 渲染时会同步调本函数（缓存 TTL 内同步 resolve），
+  //   旧版 then 里无条件 render_workbench → 渲染又触发本函数 → 无限微任务循环把主线程饿死
+  //   （致知台「点击播放后卡死」的真凶——与 TTS/桥无关，网页版与真机同中招）。
+  //   两道守卫：① 同 key 1.5 秒窗口内不重入（微任务风暴直接掐断）；② 仅当「force 或本次真正
+  //   发起了网络拉取（__fetched）」才重渲染——缓存命中数据没变，无需重画。
   _zz99LiveRefresh(key, force) {
+    const now = Date.now();
+    if (!force && this._zz99LRKey === key && (now - (this._zz99LRAt || 0)) < 1500) return Promise.resolve();
+    this._zz99LRKey = key; this._zz99LRAt = now;
     const p = key === 'daily' ? this._zz99FetchLive(force) : this._zz99FetchCategory(key, force);
-    return Promise.resolve(p).then(() => {
+    return Promise.resolve(p).then((r) => {
+      if (!force && !(r && r.__fetched)) return;     // 缓存命中/拉取失败：数据未变，不重渲染（断循环）
       if (this.currentView === 'workbench' && this._wbView === 'zhizhi99' && this._zz99On === key) {
         try { this.render_workbench(); } catch (e) {}
       }
@@ -267,9 +277,10 @@ Object.assign(App, {
       clearTimeout(timer);
       const j = await res.json().catch(() => ({}));
       if (j && j.status === 'ok' && Array.isArray(j.items) && j.items.length) {
-        const data = { ok: true, ts: Date.now(), srcName: '人民网 RSS', items: j.items.slice(0, 6) };
+        const data = { ok: true, ts: Date.now(), srcName: '人民网 RSS', items: j.items.slice(0, 6), __fetched: true };
         this._zz99Live = data;
-        try { localStorage.setItem('zz99_live_cache', JSON.stringify(data)); } catch (e) {}
+        // v12.9.56 __fetched 标记不落盘（仅本次调用可见：真拉了网络才触发收音机重渲染）
+        try { const persist = Object.assign({}, data); delete persist.__fetched; localStorage.setItem('zz99_live_cache', JSON.stringify(persist)); } catch (e) {}
         return data;
       }
       throw new Error('bad payload');
@@ -337,99 +348,57 @@ Object.assign(App, {
     this.gotoWb('zhizhi99');
   },
 
-  // ==================== TTS 封装（SpeechSynthesis，无则静默降级）====================
-  // v12.9.14 男新闻主播播报风格：24 岁左右磁性沉稳男声（云健/云扬/云希/Binbin 评分优选 · 排除女声误匹配）·
-  //   中音偏低 pitch 0.88、约 140-150 字/分舒缓语速、每句微变速微变调（拒绝平铺直叙与机器念稿感）；
-  //   标点四档真人停顿：段落 ¶ 900ms / 句末 620ms / 分句 470ms / 逗顿 330ms（呼吸气口）
+  // ==================== v12.9.59 TTS 封装（@capacitor-community/text-to-speech · 复用全局实例）====================
+  // 重做根因：安卓 WebView 不带语音合成内核（window.speechSynthesis 不存在）→ 旧版弹「当前浏览器不支持」。
+  //   人声全部走系统 TTS 引擎（95-native99.js 统一封装——同一引擎实例，绝不重复新建；
+  //   引擎缺失/失败 → 95 层统一友好提示一次，绝不弹「插件找不到」报错弹窗）。
+  //   播报风格保留：约 140-150 字/分舒缓语速、中低音 pitch 0.88、每句微变速微变调（拒绝机器念稿感）；
+  //   标点四档停顿：段落 900ms / 句末 620ms / 分句 470ms / 逗顿 330ms（呼吸气口）。
+  //   官方插件 speak() 在整段朗读完成时 resolve——顺序播报链直接 await 推进，无需事件猜时长。
   _zz99TtsOk() {
-    try { return typeof speechSynthesis !== 'undefined' && typeof SpeechSynthesisUtterance !== 'undefined'; } catch (e) { return false; }
-  },
-  _zz99PickVoice() {
-    try {
-      const vs = speechSynthesis.getVoices() || [];
-      if (!vs.length) return this._zz99VoiceCache || null;
-      const zh = vs.filter(v => /zh|cmn|Chinese/i.test((v.lang || '') + ' ' + (v.name || '')));
-      if (!zh.length) return this._zz99VoiceCache || null;
-      // v12.9.14 评分制选音色：男新闻主播（云扬/云健/康康）> 年轻磁性男声（云希/Binbin）
-      //   > 神经网络音色（Natural/Online · 非机械合成）> 中文默认；「female」含「male」子串须先排除女声
-      const score = (v) => {
-        const n = (v.name || '').toLowerCase();
-        let s = 0;
-        if (!this._zz99IsMaleVoice(v)) {
-          if (/natural|online|neural|premium|enhanced/.test(n)) return 25;  // 女声最多拿神经网络分
-          return 0;
-        }
-        if (/yunyang|yunjian|kangkang/.test(n)) s += 100;                  // 新闻主播音色
-        else s += 60;                                                       // 男声
-        if (/natural|online|neural|premium|enhanced/.test(n)) s += 25;      // 神经网络质感
-        if (/yunxi/.test(n)) s += 15;                                       // 云希：24 岁左右温润
-        return s;
-      };
-      zh.sort((a, b) => score(b) - score(a));
-      this._zz99VoiceCache = zh[0];
-      return zh[0];
-    } catch (e) { return this._zz99VoiceCache || null; }
-  },
-  _zz99IsMaleVoice(v) {
-    try {
-      const n = ((v && v.name) || '').toLowerCase();
-      if (n.includes('female') || n.includes('女')) return false;
-      return /yunxi|yunjian|yunyang|kangkang|binbin|liang|male|男/.test(n);
-    } catch (e) { return false; }
-  },
-  // v12.9.14 音色异步就绪：Chrome 首次 getVoices() 为空，voiceschanged 事件后补齐并缓存
-  _zz99WarmVoices() {
-    try {
-      if (typeof speechSynthesis === 'undefined') return;
-      if (!this._zz99VoicesHooked) {
-        this._zz99VoicesHooked = true;
-        try { speechSynthesis.addEventListener('voiceschanged', () => { try { this._zz99PickVoice(); } catch (e) {} }); } catch (e) {}
-      }
-      this._zz99PickVoice();
-    } catch (e) {}
+    return !!this._tts99();   // 客户端系统 TTS 恒可用；网页版无语音（调用方提示，不判断浏览器）
   },
   _zz99Speak(text, onEnd) {
-    if (!this._zz99TtsOk()) return; // 无 TTS：静默降级——不朗读也不自动推进（文字流停留当前条，手动下一台）
-    this._zz99WarmVoices();
-    try { speechSynthesis.cancel(); } catch (e) {}
+    if (!this._tts99()) return;           // 网页版：无语音，不朗读也不自动推进（文字流停留当前条，手动下一台）
     const token = (this._zz99Token = (this._zz99Token || 0) + 1);   // 取代旧播报的取消令牌
-    const raw = String(text || '').slice(0, 600).replace(/\s*\n+\s*/g, '¶');  // 换行 → ¶ 段落长停顿标记
+    const raw = String(text || '').slice(0, 600).replace(/\s*\n+\s*/g, '¶');  // 换行 → 段落长停顿标记
     // 分句：按中文标点切分（标点保留在句内 · 段落/句末/分句/逗顿四档停顿）
     const parts = (raw.match(/[^。！？；，、!?;,.¶]+[。！？；，、!?,.;¶]*/g) || []).map(s => s.trim()).filter(Boolean);
     if (!parts.length) parts.push(raw.replace(/¶/g, '').trim());
     let i = 0;
     const jitter = (base, amp) => Math.max(0.5, base + (Math.random() - 0.5) * 2 * amp);
-    const speakNext = () => {
-      if (token !== this._zz99Token) return;                  // 已被新播报/停止取代
+    const speakNext = async () => {
+      if (token !== this._zz99Token) return;                    // 已被新播报/停止取代
       if (i >= parts.length) { if (onEnd) { try { onEnd(); } catch (e) {} } return; }
       const seg = parts[i++];
-      const u = new SpeechSynthesisUtterance(seg.replace(/¶/g, ''));
-      u.lang = 'zh-CN';
-      u.rate = jitter(i === 1 ? 0.78 : 0.81, 0.015);  // ≈140-150 字/分 · 首句起势稍慢 · 每句微变速（拒绝平铺直叙）
-      u.pitch = jitter(0.88, 0.02);                    // 中音偏低 · 温润磁性 · 轻微自然起伏
-      u.volume = 1;
-      const v = this._zz99PickVoice();
-      if (v) { try { u.voice = v; } catch (e) {} }
-      if (i === 1 && v && !this._zz99IsMaleVoice(v) && !this._zz99MaleHinted) {
-        this._zz99MaleHinted = true;
-        this._flash('🎙️ 当前设备暂无中文男声音色，已自动降速降调贴近电台感（用 Edge 浏览器可获云健/云希主播级男声）');
-      }
       const gap = /¶/.test(seg) ? 900                                    // 段落之间停顿稍长（呼吸气口）
         : (/[。！？!?]\s*$/.test(seg) ? 620 : (/[；;]/.test(seg) ? 470 : 330));  // 句末 / 分句 / 逗顿
-      u.onend = () => setTimeout(speakNext, gap);
-      u.onerror = () => setTimeout(speakNext, 200);
-      try { speechSynthesis.speak(u); } catch (e) { setTimeout(speakNext, 200); }
+      // 逐段朗读（speak 完成即 resolve → 气口停顿 → 下一段；失败 → 95 层友好提示 + 停链）
+      const ok = await this._tts99Speak(seg.replace(/¶/g, ''), {
+        lang: 'zh-CN', rate: jitter(i === 1 ? 0.78 : 0.81, 0.015), pitch: jitter(0.88, 0.02),
+      });
+      if (token !== this._zz99Token) return;
+      if (!ok) return this._zz99TtsFail();                      // 引擎失效：停链（提示由 95 层统一去重）
+      setTimeout(speakNext, gap);
     };
     speakNext();
   },
+  // TTS 失败统一出口：停链 + 停自动连播（友好提示由 95-native99 层统一处理，这里只复位状态）
+  _zz99TtsFail() {
+    try { this._zz99StopSpeak(); } catch (e) {}
+    this._zz99On = null;                    // 停止自动连播（旧版会无限空转下一条 = 卡死）
+    this._zz99Speaking = false;
+    this._home99RadioOn = false;            // 首页播音机同步让位
+    if (this._m99BtnSyncRadio) { try { this._m99BtnSyncRadio(); } catch (e) {} }
+  },
   _zz99StopSpeak() {
     this._zz99Token = (this._zz99Token || 0) + 1;              // 令牌失效：链式停顿不再推进
-    try { if (this._zz99TtsOk()) speechSynthesis.cancel(); } catch (e) {}
+    this._tts99Stop();                                          // 官方插件 stop（立即截断）
   },
   // ==================== v12.9.13 首页播音机：立即播放「今日播报」（不离开首页）====================
   home99Radio() {
     if (this._home99RadioOn) { this.home99RadioStop(); return; }
-    if (!this._zz99TtsOk()) { this._flash('当前浏览器不支持语音播报（TTS）'); return; }
+    if (!this._zz99TtsOk()) { this._flash('📻 语音播报走手机系统人声——请在一人行手机客户端收听'); return; }
     if (this._m99Playing) this.music99Stop();   // v12.9.16 统一播放器：播报与音乐互斥（单选播放其中之一）
     this._home99RadioOn = true;
     this._home99RadioIdx = 0;

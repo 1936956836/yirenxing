@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="theme-color" content="#0d9488">
+  <meta name="description" content="一人行 - 沉浸式日常生活管理，记录健康、睡眠、饮食、卫生、运动、学习、戒除陋习、经济数据与日记">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="一人行">
+  <link rel="manifest" href="manifest.json">
+  <link rel="apple-touch-icon" href="icons/icon-1024.jpg">
+  <link rel="icon" type="image/svg+xml" href="icons/icon.svg">
+  <title>一人行 v12.9.71</title>
+  <link rel="stylesheet" href="css/styles.css?v=12.9.71">
+  <script>
+    // v2026.0905c 手机端崩溃修复①：必须在所有模块脚本之前注册（capture 阶段）——
+    // 记录加载失败的 js 文件（存完整路径）。此前任何模块 404/网络抖动时 App 仍"半启动"（00-core 已定义），
+    // 用户点进对应板块才崩溃（"先用后崩"），且无人知道缺了什么文件。
+    window.__bootFailedScripts = [];
+    window.addEventListener('error', function (e) {
+      if (e.target && e.target.tagName === 'SCRIPT' && e.target.src && e.target.src.indexOf('/js/') !== -1) {
+        try { window.__bootFailedScripts.push(new URL(e.target.src).pathname); } catch (_) {}
+      }
+    }, true);
+  </script>
+</head>
+<body>
+
+  <!-- ===== v11.3 开屏：像素小猫在男主人身边舔爪 · 一人行（2s 动画，点击可跳过） ===== -->
+  <div id="splash99" aria-hidden="true">
+    <div class="splash99-scene">
+      <svg id="splash99Cat" class="splash99-cat" width="77" height="84" viewBox="0 0 77 84" aria-hidden="true"></svg>
+      <svg id="splash99Man" class="splash99-man" width="84" height="91" viewBox="0 0 84 91" aria-hidden="true"></svg>
+    </div>
+    <div class="splash99-title">一人行</div>
+    <div class="splash99-slogan">一个人也能好好生活</div>
+    <span class="splash99-ver" id="splash99Ver">v12.9.48</span>
+  </div>
+  <script>
+  (function () {
+    try {
+      if (sessionStorage.getItem('splash99_skipped')) { var _s = document.getElementById('splash99'); if (_s) _s.parentNode.removeChild(_s); return; }
+      sessionStorage.setItem('splash99_skipped', '1');
+      // 像素画数据（'.' = 空）：小猫两帧舔爪 + 男主人坐姿
+      var CAT_A = [ // 帧 A：右爪抬起 + 伸舌舔
+        '.EE.....EE.','.EPE...EPE.','.WWWWWWWWW.','WWWWWWWWWWW','WWmWWWWWmWW','WWWWWnWWWWW',
+        'WWWWWWWWPPW','WWWWWttPPPW','WWWWWWWWWWW','WW.WWWWW.WW','WW.WWWWW.WW','...WWWWW...'];
+      var CAT_B = [ // 帧 B：爪放下 · 休息
+        '.EE.....EE.','.EPE...EPE.','.WWWWWWWWW.','WWWWWWWWWWW','WWmWWWWWmWW','WWWWWnWWWWW',
+        'WWWWWWWWWWW','WWWWWWWWWWW','WWWWWWWWWWW','WW.WWWWW.WW','WW.WWWWW.WW','...WWWWW...'];
+      var MAN = [ // 男主人坐姿（teal 上衣 · 呼应 App 主题色与磨砂玻璃小银猫图标）
+        '....HHHH....','....HHHH....','....FFFF....','....FFFF....','.....FF.....',
+        '..CCCCCCCC..','.CCCCCCCCCC.','.CCeCCCCeCC.','..CCCCCCCC..','..CCCCCCCC..',
+        '..KKKKKKKK..','..KK....KK..','..XX....XX..'];
+      var COLORS = { W:'#f2f7fa', E:'#d9e6ec', P:'#f4c2d8', m:'#46626e', n:'#e38ba8', t:'#f9a8d4',
+        H:'#45586a', F:'#f0c9a8', C:'#0f766e', e:'#2b4450', K:'#3b4c5e', X:'#22303d' };
+      var PX = 7;
+      function draw(art) {
+        var s = '';
+        for (var r = 0; r < art.length; r++) {
+          var row = art[r];
+          for (var c = 0; c < row.length; c++) {
+            var ch = row[c];
+            if (ch === '.') continue;
+            s += '<rect x="' + (c * PX) + '" y="' + (r * PX) + '" width="' + PX + '" height="' + PX + '" fill="' + (COLORS[ch] || COLORS.W) + '" rx="1"/>';
+          }
+        }
+        return s;
+      }
+      var cat = document.getElementById('splash99Cat');
+      if (cat) cat.innerHTML =
+        '<g class="cat-lick-a">' + draw(CAT_A) + '</g>' +
+        '<g class="cat-lick-b">' + draw(CAT_B) + '</g>';
+      var man = document.getElementById('splash99Man');
+      if (man) man.innerHTML = draw(MAN);
+      // 舔爪循环（450ms/帧）
+      var lick = setInterval(function () { if (cat) cat.classList.toggle('lick-b'); }, 450);
+      // 2s 开屏动画结束淡出；点击跳过
+      var splash = document.getElementById('splash99');
+      var gone = false;
+      function dismiss() {
+        if (gone) return; gone = true;
+        if (splash) splash.classList.add('splash99-out');
+        setTimeout(function () {
+          clearInterval(lick);
+          if (splash && splash.parentNode) splash.parentNode.removeChild(splash);
+        }, 600);
+      }
+      var t = setTimeout(dismiss, 2000);
+      if (splash) splash.addEventListener('click', function () { clearTimeout(t); dismiss(); });
+      // v12.9.48 开屏版本号与 js/version.js 同源同步（此前写死 v12.7 永不更新）；手机专属版加标注
+      try {
+        window.addEventListener('DOMContentLoaded', function () {
+          var el = document.getElementById('splash99Ver');
+          var V = window.__APP_VER__ || {};
+          if (el && V.v) el.textContent = 'v' + V.v + (window.__PHONE_EDITION__ ? ' · 手机专属版' + (V.phoneV ? ' ' + V.phoneV : '') : '');
+        });
+      } catch (e) {}
+    } catch (e) {}
+  })();
+  </script>
+  <div class="app-layout app-layout-no-nav">
+
+    <!-- v12.7：顶边栏（topbar / 北京时间时钟）与底边栏（tabbar）已按用户要求彻底删除；
+         导航 = 左下角可收纳圆形 dock 按钮（见页面底部 #dock99），首页右上为阿福/宠物圆形入口（hero 内） -->
+    <div class="main-wrap main-wrap-p5">
+
+      <!-- 视图容器（v7.0 拆分独立：虚拟模块视图已全部迁出至「生命征程·虚拟」） -->
+      <main class="container container-p5">
+        <section class="view active" id="view-dashboard"></section>
+        <section class="view" id="view-health"></section>
+        <section class="view" id="view-medical"></section><!-- v2.0.5：就医数据/就诊时间线（v6.9 原病历更名） -->
+        <section class="view" id="view-sleep"></section>
+        <section class="view" id="view-diet"></section>
+        <section class="view" id="view-hygiene"></section>
+        <section class="view" id="view-exercise"></section>
+        <section class="view" id="view-learning"></section>
+        <section class="view" id="view-achievements"></section>
+        <section class="view" id="view-habit"></section>
+        <section class="view" id="view-forbidden"></section>
+        <section class="view" id="view-rewards"></section>
+        <section class="view" id="view-ledger"></section>
+        <section class="view" id="view-diary"></section>
+        <section class="view" id="view-todo"></section>
+        <section class="view" id="view-outfit"></section>
+      <!-- v3.0：日志板块已取消（流水拆分至双管家，公告迁【设置】页；v12.6 开发者日志已删除）
+           v12.9.22：同步版面已删除（登录后云同步全自动）——容器保留供 goals/weekly_report/data_protection 子页复用 -->
+      <section class="view" id="view-sync"></section>
+        <section class="view" id="view-workbench"></section>
+        <!-- v12.9.45 权限管理页（入口：🧭 收展键长按 1 秒 · 液体流动音 + 圆幕渐变过渡） -->
+        <section class="view" id="view-perm99"></section>
+        <!-- v12.9.46 一人行攻略（入口：权限管理页 · 各功能使用方法） -->
+        <section class="view" id="view-guide99"></section>
+        <!-- v12.9.46 独行音乐（入口：底部【首页】圆形旋钮长按 1 秒 · 液体音 + 圆幕过渡） -->
+        <section class="view" id="view-solomusic99"></section>
+        <!-- v12.9.47 独行地球（入口：底部【习惯】圆形旋钮长按 1 秒 · 液体音 + 深蓝圆幕过渡） -->
+        <section class="view" id="view-earth99"></section>
+        <!-- v12.9.47 独行视频（入口：底部【记录】圆形旋钮长按 1 秒 · 液体音 + 紫红圆幕过渡） -->
+        <section class="view" id="view-video99"></section>
+        <!-- v12.9.47 独行表达（入口：底部【家园】圆形旋钮长按 1 秒 · 液体音 + 青绿圆幕过渡） -->
+        <section class="view" id="view-express99"></section>
+      </main>
+    </div>
+  </div>
+
+  <!-- v12.7 左下角圆形 dock 导航（可收纳：点 🧭 收起/展开；激活 = 米白圆底，未激活 = 半透明灰） -->
+  <nav class="dock99" id="dock99" aria-label="主导航">
+    <button class="dock99-toggle" id="dock99Toggle" type="button" aria-label="收纳 / 展开导航">🧭</button>
+    <div class="dock99-items">
+      <button class="dock99-btn active" type="button" data-view="dashboard" aria-label="首页"><span class="dock99-ico">🏠</span><span class="dock99-lbl">首页</span></button>
+      <button class="dock99-btn" type="button" data-view="habit" aria-label="习惯"><span class="dock99-ico">🌿</span><span class="dock99-lbl">习惯</span></button>
+      <button class="dock99-btn" type="button" data-view="record" aria-label="记录"><span class="dock99-ico">📝</span><span class="dock99-lbl">记录</span></button>
+      <button class="dock99-btn" type="button" data-view="space" aria-label="家园"><span class="dock99-ico">🏡</span><span class="dock99-lbl">家园</span></button>
+    </div>
+  </nav>
+
+  <!-- v11.4 云账户：Supabase SDK（CDN，离线打开时加载失败不影响本地功能，云卡片自动显示"需联网"） -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" onerror="console.warn('[cloud99] supabase SDK 加载失败（离线模式）')"></script>
+  <script src="js/version.js"></script>
+  <script src="js/data.js?v=12.9.21b"></script>
+  <script src="js/storage.js?v=12.9.21b"></script>
+  <script src="js/app/00-core.js?v=12.9.44"></script>
+  <script src="js/app/05-reminder-safety.js?v=12.9.21b"></script>
+  <script src="js/app/08-afu-night.js?v=12.9.21b"></script>
+  <script src="js/app/10-goal-report.js?v=12.9.21b"></script>
+  <script src="js/app/15-utils.js?v=12.9.21b"></script>
+  <script src="js/app/20-dashboard.js?v=12.9.31"></script>
+  <script src="js/app/25-home-cards.js?v=12.9.68b"></script>
+  <script src="js/app/30-news-cards.js?v=12.9.21b"></script>
+  <script src="js/app/35-health.js?v=12.9.21b"></script>
+  <script src="js/app/40-daily-habits.js?v=12.9.68b"></script>
+  <script src="js/app/45-workbench.js?v=12.9.64"></script>
+  <script src="js/app/50-habit-data.js?v=12.9.68b"></script>
+  <script src="js/app/55-insight.js?v=12.9.21b"></script>
+  <script src="js/app/56-report.js?v=12.9.21b"></script>
+  <script src="js/app/60-profile.js?v=12.9.21b"></script>
+  <script src="js/app/62-pixelcat.js?v=12.9.21b"></script>
+  <script src="js/app/63-music99.js?v=12.9.21b"></script>
+  <script src="js/app/65-task-theme.js?v=12.9.21b"></script>
+  <script src="js/app/68-focus-notes.js?v=12.9.31"></script>
+  <script src="js/app/70-pet.js?v=12.9.21b"></script>
+  <script src="js/app/75-home99.js?v=12.9.21b"></script>
+  <script src="js/app/76-dream99.js?v=12.9.21b"></script>
+  <script src="js/app/77-drift99.js?v=12.9.21b"></script>
+  <script src="js/app/78-cloud-auth.js?v=12.9.21b"></script>
+  <script src="js/app/79-afu-record.js?v=12.9.21b"></script>
+  <script src="js/app/80-mode99.js?v=12.9.21b"></script>
+  <script src="js/app/81-vault99.js?v=12.9.21b"></script>
+  <script src="js/app/82-gewu99.js?v=12.9.21b"></script>
+  <script src="js/app/83-zhizhi99.js?v=12.9.21b"></script>
+  <script src="js/app/84-afu-mood.js?v=12.9.21b"></script>
+  <script src="js/app/85-ta99.js?v=12.9.68b"></script>
+  <script src="js/app/86-sport99.js?v=12.9.21b"></script>
+  <script src="js/app/87-study99.js?v=12.9.21b"></script>
+  <script src="js/app/88-quiz99-data.js?v=12.9.21b"></script>
+  <script src="js/app/89-quiz99-major.js?v=12.9.21b"></script>
+  <script src="js/app/90-study99-quiz.js?v=12.9.21b"></script>
+  <script src="js/app/91-record99.js?v=12.9.21b"></script>
+  <script src="js/app/92-rpg99.js?v=12.9.31"></script>
+  <script src="js/app/93-quit99.js?v=12.9.40"></script>
+  <script src="js/app/94-hot99.js?v=12.9.40"></script>
+  <script src="js/app/95-native99.js?v=12.9.64"></script>
+  <script src="js/app/96-perm99.js?v=12.9.68"></script>
+  <script src="js/app/97-food99.js?v=12.9.46"></script>
+  <script src="js/app/98-boss99.js?v=12.9.46"></script>
+  <script src="js/app/99-weather99.js?v=12.9.46"></script>
+  <script src="js/app/100-solomusic99.js?v=12.9.46"></script>
+  <script src="js/app/101-earth99.js?v=12.9.47"></script>
+  <script src="js/app/102-video99.js?v=12.9.47"></script>
+  <script src="js/app/103-express99.js?v=12.9.47"></script>
+  <script src="js/app/104-cost99.js?v=12.9.49"></script>
+  <script src="js/app/105-stock99.js?v=12.9.49"></script>
+  <script src="js/app/106-notify99.js?v=12.9.49"></script>
+  <script src="js/app/107-aji99.js?v=12.9.50"></script>
+  <script src="js/app/108-period99.js?v=12.9.50"></script>
+  <script src="js/app/109-voice99.js?v=12.9.64"></script>
+    <script src="js/lib/howler.min.js?v=12.9.58"></script>
+  <script src="js/app/110-howler99.js?v=12.9.58"></script>
+  <script src="js/app/111-qwerty99.js?v=12.9.58"></script>
+  <script src="js/app/112-poop99.js?v=12.9.64"></script>
+  <script src="js/app/113-go99.js?v=12.9.66"></script>
+  <script src="js/app/114-gomap99.js?v=12.9.67"></script>
+  <script src="js/app/115-lookus99.js?v=12.9.68"></script>
+  <script src="js/app/116-lock99.js?v=12.9.70"></script>
+  <script src="js/app/125-journal-sync.js?v=12.9.21b"></script>
+  <script src="js/app/130-library.js?v=12.9.21b"></script>
+  <script src="js/app/145-boot.js?v=12.9.21b"></script>
+  <script>
+    // v2026.0905c 手机端崩溃修复②：load 后检查——核心模块缺失时全屏遮罩 + 一键重试，
+    // 不再让"半启动"的 App 进入可用状态（点进对应板块才崩 = 用户看到的"先用后崩"）
+    (function () {
+      var FATAL = /\/js\/(app\/|data\.js|storage\.js)/; // 缺这些 = 应用残废；sanguo.js 仅影响三国杀，不致命
+      window.addEventListener('load', function () {
+        setTimeout(function () {
+          var bad = window.__bootFailedScripts || [];
+          var appOk = (typeof App !== 'undefined' && typeof Store !== 'undefined');
+          if (!bad.length && appOk) return;
+          // 缺 js/app/*、js/data.js、js/storage.js = 应用残废（必须拦）；sanguo.js 仅影响三国杀（不阻断）
+          var fatal = !appOk || bad.some(function (f) { return FATAL.test(f); });
+          if (!fatal) { console.warn('[boot] 非核心脚本缺失（不阻断）：', bad.join('、')); return; }
+          var ov = document.createElement('div');
+          ov.style.cssText = 'position:fixed;inset:0;background:rgba(15,23,42,.78);z-index:2147483647;display:flex;align-items:center;justify-content:center;padding:18px;';
+          var box = document.createElement('div');
+          box.style.cssText = 'max-width:520px;width:100%;max-height:86vh;overflow:auto;background:#fff;border-radius:14px;padding:20px;box-shadow:0 20px 50px rgba(2,6,23,.35);font-size:14px;line-height:1.8;color:#0f172a;';
+          box.innerHTML =
+            '<div style="font-size:17px;font-weight:800;color:#dc2626;margin-bottom:8px">❌ 应用文件加载不完整</div>' +
+            '<div style="margin-bottom:6px">未能加载的文件：<b style="color:#b45309">' + (bad.length ? bad.join('、') : '未知（可能整个 js/app/ 目录缺失）') + '</b></div>' +
+            '<div style="font-size:12.5px;color:#64748b;margin-bottom:10px">现在启动会是"半残"状态——部分板块点进去会崩溃，所以先拦下来。</div>' +
+            '<div style="border-top:1px solid #e2e8f0;padding-top:10px;font-size:12.5px;color:#475569">' +
+            '1️⃣ 网络抖动：点下方「重新加载」即可；<br>' +
+            '2️⃣ 部署/拷贝漏文件：请上传<b>完整项目文件夹</b>（尤其是 js/app/ 目录及其 30 个文件）；<br>' +
+            '3️⃣ 旧缓存作怪：强制刷新页面或清除该站点缓存后重开；<br>' +
+            '4️⃣ 应急使用：打开「生命征程-单文件版.html」（全部代码内联，不依赖任何外部文件）。' +
+            '</div>' +
+            '<button id="__bootRetry" style="margin-top:14px;width:100%;padding:12px;border:0;border-radius:10px;background:#0d9488;color:#fff;font-size:15px;font-weight:700;cursor:pointer">🔄 重新加载</button>';
+          ov.appendChild(box);
+          document.body.appendChild(ov);
+          document.getElementById('__bootRetry').onclick = function () { location.reload(); };
+        }, 600);
+      });
+    })();
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', function () {
+        navigator.serviceWorker.register('sw.js').catch(function (e) {
+          console.warn('SW 注册失败:', e);
+        });
+      });
+    }
+  </script>
+</body>
+</html>

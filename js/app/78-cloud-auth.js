@@ -69,12 +69,42 @@ Object.assign(App, {
 
   // ===== 启动初始化（App.init 末尾调用；一切守卫容错，绝不抛错）=====
   // v12.9.20：启动即校验登录态——先上「检查中」门禁锁屏，会话恢复成功才解锁（强制登录门禁）
+  // v12.9.60 游客模式：本机选择过「游客进入」（localStorage.c99_guest）→ 免账号直接本地使用
+  //   （数据只存本机 · 不上云 · 应用内更新检测照常可用）；若存在旧登录会话则优先恢复账号并退出游客。
   cloud99Init() {
     try {
       this._c99.cfg = this._c99ReadCfg();
-      if (!this._c99.cfg || !this._c99.cfg.url || !this._c99.cfg.key) { this._c99.state = 'idle'; this.cloud99GateShow(); return; }
-      if (typeof supabase === 'undefined') { this._c99.state = 'sdk-missing'; this.cloud99GateShow(); return; } // 离线打开单文件版
+      const guest = (() => { try { return localStorage.getItem('c99_guest') === '1'; } catch (e) { return false; } })();
+      if (!this._c99.cfg || !this._c99.cfg.url || !this._c99.cfg.key) {
+        // 未配置云端 / 离线单文件版：游客可直接本地使用，其余按原门禁
+        this._c99.state = guest ? 'guest' : 'idle';
+        if (guest) this.cloud99GateDismiss(); else this.cloud99GateShow();
+        return;
+      }
+      if (typeof supabase === 'undefined') { // 离线打开单文件版
+        this._c99.state = guest ? 'guest' : 'sdk-missing';
+        if (guest) this.cloud99GateDismiss(); else this.cloud99GateShow();
+        return;
+      }
       this._c99.client = supabase.createClient(this._c99.cfg.url, this._c99.cfg.key);
+      if (guest) {
+        // 游客态：有旧登录会话 → 升级为账号登录（退出游客）；没有 → 直接本地使用，不锁屏
+        this._c99.client.auth.getSession().then(({ data }) => {
+          try {
+            if (data && data.session && data.session.user) {
+              try { localStorage.removeItem('c99_guest'); } catch (_) {}
+              this._c99.user = { id: data.session.user.id, email: data.session.user.email || '' };
+              this._c99.state = 'online';
+              this.cloud99GateDismiss();
+              this.cloud99SessionClaim();
+            } else {
+              this._c99.state = 'guest';
+              this.cloud99GateDismiss();
+            }
+          } catch (_) { this._c99.state = 'guest'; this.cloud99GateDismiss(); }
+        }).catch(() => { this._c99.state = 'guest'; this.cloud99GateDismiss(); });
+        return;
+      }
       this.cloud99GateShow('checking'); // 先锁屏：登录态确认前不可用
       // 恢复登录会话（session 持久化在 supabase 自己的 localStorage 键里）
       this._c99.client.auth.getSession().then(({ data }) => {
@@ -231,6 +261,8 @@ Object.assign(App, {
       }
       const c = this._c99;
       const isSignup = this._c99Mode === 'signup';
+      let dark = false;                                   // v12.9.60：提前声明（游客按钮构建时要用）
+      try { dark = document.documentElement.getAttribute('data-theme') === 'dark'; } catch (_) {}
       let body = '';
       if (mode === 'checking') {
         body = '<div style="text-align:center;color:#94a3b8;font-size:14px;padding:30px 0">⏳ 正在检查登录状态…</div>';
@@ -260,10 +292,14 @@ Object.assign(App, {
           + '<div style="display:flex;justify-content:space-between;margin-top:10px;font-size:12.5px">'
           + '<a href="javascript:void(0)" style="color:#6366f1" onclick="App.cloud99GateSwitch()">' + (isSignup ? '已有账号？去登录' : '没有账号？去注册') + '</a>'
           + '<a href="javascript:void(0)" style="color:#6366f1" onclick="App.cloud99ResetPw()">忘记密码</a></div>'
+          // v12.9.60 游客模式：免账号直接本地使用（数据只存本机 · 支持应用内更新检测）
+          + '<div style="margin-top:14px;padding-top:12px;border-top:1px dashed ' + (dark ? '#312e81' : '#e2e8f0') + '">'
+          + '<button class="btn btn-ghost" style="width:100%" onclick="App.cloud99GuestEnter()">🌿 游客进入（免账号）</button>'
+          + '<div style="font-size:11px;color:#94a3b8;margin-top:7px;line-height:1.8;text-align:center">'
+          + '游客模式：免账号登录直接使用 · <b>数据只保存在本机</b>（不上云 · 换机不随行）<br>'
+          + '支持应用内检查版本更新 · 随时可到首页账户区登录账号</div></div>'
           + '<div id="c99-msg" style="margin-top:10px"></div>';
       }
-      const dark = false;
-      try { dark = document.documentElement.getAttribute('data-theme') === 'dark'; } catch (_) {}
       // z-index 用 int32 极值：必须盖过 modal(2147483600) 等一切既有弹层层级——门禁是最高优先级
       el.innerHTML = '<div style="position:fixed;inset:0;z-index:2147483647;'
         + (dark ? 'background:linear-gradient(160deg,#0b0620,#1e1b4b);' : 'background:linear-gradient(160deg,#f8fafc,#eef2ff);')
@@ -300,6 +336,15 @@ Object.assign(App, {
   cloud99GateSwitch() {
     this._c99Mode = this._c99Mode === 'signup' ? 'login' : 'signup';
     this.cloud99GateShow();
+  },
+  // v12.9.60 游客模式：免账号进入（数据只存本机 · 不上云 · 支持应用内更新检测）
+  cloud99GuestEnter() {
+    try { localStorage.setItem('c99_guest', '1'); } catch (e) {}
+    this._c99.user = null;
+    this._c99.state = 'guest';
+    this.cloud99GateDismiss();
+    try { this._flash('🌿 游客模式——免账号使用，数据只保存在本机'); } catch (e) {}
+    try { this.render_dashboard && this.render_dashboard(); } catch (e) {}
   },
 
   // ===== 项目配置（v12.7c：内置官方项目开箱即连；localStorage 里的自建配置可覆盖）=====
@@ -347,6 +392,7 @@ Object.assign(App, {
       if (res && res.user) {
         this._c99.user = { id: res.user.id, email: res.user.email || email };
         this._c99.state = 'online';
+        try { localStorage.removeItem('c99_guest'); } catch (_) {}   // v12.9.60 登录成功 → 退出游客标记
         this.cloud99Msg('✅ ' + (this._c99Mode === 'signup' ? '注册并登录成功！' : '欢迎回来，') + this._c99.user.email, true);
         this.cloud99GateDismiss();        // v12.9.20 登录成功 → 撤门禁解锁
         await this.cloud99SessionClaim(true); // v12.9.20 单设备占领 + 启动心跳
@@ -374,6 +420,7 @@ Object.assign(App, {
     this._c99.user = null;
     this._c99.state = 'offline';
     this._c99CompareTip = '';
+    try { localStorage.removeItem('c99_guest'); } catch (_) {}   // v12.9.60 登出 → 同时清游客标记（回到登录门可重新选择）
     this._c99CardRefresh();
     this.cloud99GateShow(); // v12.9.20 底线：登出后必须重新登录
   },

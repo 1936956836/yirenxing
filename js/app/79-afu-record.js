@@ -451,10 +451,16 @@ Object.assign(App, {
       '今晚睡前把手机放远一点，让入睡更干脆。',
     ];
     let healthTip;
-    if (h >= 20) healthTip = '💊 22:00 前记得 HIV 抗病毒药（齐拉米夫双定 + 艾诺韦林）——今晚最不能漏的一顿。';
+    // v12.9.50 账号级门控：指定账号才推送个人用药提醒；其他账号用通用健康提示（不含任何个人疾病信息）
+    const _ownerAcct = this._isAuthorizedAccount && this._isAuthorizedAccount();
+    if (h >= 20) healthTip = _ownerAcct
+      ? '💊 22:00 前记得 HIV 抗病毒药（齐拉米夫双定 + 艾诺韦林）——今晚最不能漏的一顿。'
+      : '💊 有晚间要吃的药，记得按时按量服完再休息。';
     else if (h >= 15 && waterNow < 1000) healthTip = `💧 今天只喝了 ${waterNow}ml 水——睡前还有时间补一补（目标 1300ml）。`;
     else if (yNightH && yNightH < 6) healthTip = `😴 昨晚只睡了 ${yNightH} 小时——今天尽量 23:00 前躺下，把免疫黄金修复期睡回来。`;
-    else if (h < 10) healthTip = '🍊 早餐后把维生素 B/C/D 一起吃了；转移因子胶囊随餐三顿也别忘。';
+    else if (h < 10) healthTip = _ownerAcct
+      ? '🍊 早餐后把维生素 B/C/D 一起吃了；转移因子胶囊随餐三顿也别忘。'
+      : '🍊 早餐后记得吃你今天的药或保健品——按医嘱坚持，才有积累。';
     else healthTip = FALLBACK_TIPS[today.split('-').reduce((s, x) => s + +x, 0) % FALLBACK_TIPS.length];
 
     // —— 渲染 ——
@@ -875,14 +881,16 @@ Object.assign(App, {
     else if (inp) inp.placeholder = '说一句就帮你记录，如「喝了300ml水」「做了个梦…」';
   },
   afuVoiceToggle() {
-    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SR) return this._flash('🎤 当前浏览器不支持语音识别（Chrome / Edge / 安卓微信内置浏览器效果最佳）');
+    // v12.9.49 语音适配层 / v12.9.61 起：客户端走 Vosk 离线语音识别（95 层统一适配），网页版回落浏览器 SpeechRecognition
+    const rec = this._sr99Create ? this._sr99Create() : null;
+    if (!rec) return this._flash(!!window.__PHONE_EDITION__
+      ? '🎤 语音识别启动失败——再点一次试试（首次会弹出话筒权限申请）'
+      : '🎤 当前浏览器不支持语音识别（Chrome / Edge / 安卓微信内置浏览器效果最佳）');
     if (this._afuVRecOn) {
       this._afuVRecOn = false;
       try { this._afuVRec && this._afuVRec.stop(); } catch (e) {}
       return;
     }
-    const rec = new SR();
     rec.lang = 'zh-CN';
     rec.continuous = true;
     rec.interimResults = true;
@@ -899,7 +907,7 @@ Object.assign(App, {
       if (el) el.value = (base + interim).slice(0, 2000);
     };
     rec.onerror = (e) => {
-      if (e && e.error === 'not-allowed') { this._afuVRecOn = false; this._afuVoiceBtnState(false); this._flash('🎤 麦克风权限被拒绝——请在浏览器地址栏允许麦克风后重试'); }
+      if (e && e.error === 'not-allowed') { this._afuVRecOn = false; this._afuVoiceBtnState(false); this._flash(this._mic99Tip ? this._mic99Tip() : '🎤 麦克风权限被拒绝'); }
     };
     rec.onend = () => {
       if (this._afuVRecOn && inp()) { try { rec.start(); return; } catch (e) {} } // 静音期自动续听

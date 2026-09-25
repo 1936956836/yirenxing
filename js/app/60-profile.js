@@ -141,104 +141,199 @@ Object.assign(App, {
     this.render_workbench();
   },
   _wbLedger(wb, W) {
-    // v12.9.46 经济数据页重做：不对称淡粉设计（画风对齐学习/运动数据的简约风 · 主色淡粉 #EC4899 与白渐变）
-    // 数据口径与 v10.0 完全一致：收支双模式（_lgTab）· 管家 50/30/20 · 消费卡自动入账 · 违规标记
+    // v12.9.57 【经济数据】主页轻氧重做：三个液态玻璃泡泡（记账/用多久/多久吃）· 不对称排布 · 无多余面板
+    //   泡泡一(白蓝·记账)→ledger99 记账页 · 泡泡二(白绿·用多久)→cost99 · 泡泡三(白橙·多久吃)→stock99
+    const fmt = (v) => '¥' + (Math.round(v * 100) / 100).toFixed(2);
+    // 泡泡一：今日收支（数据口径不变）
+    const listAll = Store.getLedger().filter(x => x.date === Store.today());
+    const tOut = listAll.filter(x => x.type !== 'income').reduce((a, x) => a + (+x.amount || 0), 0);
+    const tIn = listAll.filter(x => x.type === 'income').reduce((a, x) => a + (+x.amount || 0), 0);
+    // 泡泡二：用多久（收录件数 + 使用中物品合计每日成本）
+    let cN = 0, cDay = 0;
+    try {
+      const cd = this._cost99Data();
+      cN = cd.items.length;
+      cd.items.forEach(it => { if (it.status === 'use') cDay += this._cost99PerDay(it); });
+    } catch (e) {}
+    // 泡泡三：多久吃（囤货件数 + 临期件数）
+    let sN = 0, sSoon = 0;
+    try {
+      const sd = this._stock99Data();
+      sN = sd.items.length;
+      sSoon = sd.items.filter(it => { const L = this._stock99Left(it); return L >= 0 && L <= 7; }).length;
+    } catch (e) {}
+    return `<div class="eco99-home">
+      <div class="eco99-orb o1"></div><div class="eco99-orb o2"></div><div class="eco99-orb o3"></div>
+      <div class="eco99-dust"></div>
+      <div class="eco99-head">
+        <div class="eco99-head-t"><b>经济数据</b><span>ECONOMY · 轻氧呼吸</span></div>
+        <button class="btn btn-ghost btn-sm" onclick="App.navBack()">← 返回</button>
+      </div>
+      <div class="eco99-head-sub">钱的事，轻轻记——记一笔、算一算、囤一囤，不慌不忙，好好生活。</div>
+      <div class="eco99-bubbles">
+        <button type="button" class="eco99-bubble b1 c-blue" onclick="App.gotoWb('ledger99')">
+          <span class="eco99-rim"></span>
+          <span class="eco99-b-in">
+            <span class="eco99-b-ico">🧾</span>
+            <span class="eco99-b-name">记账</span>
+            <span class="eco99-b-tag">今日支出 ${fmt(tOut)} · 收入 ${fmt(tIn)}</span>
+            <span class="eco99-b-note">支出收入都记，管家阿福 50/30/20 科学分配，每日两次温柔提醒，警惕消费主义。</span>
+            <span class="eco99-b-go">开始记录 →</span>
+          </span>
+        </button>
+        <div class="eco99-link"></div>
+        <button type="button" class="eco99-bubble b2 c-green" onclick="App.gotoWb('cost99')">
+          <span class="eco99-rim"></span>
+          <span class="eco99-b-in">
+            <span class="eco99-b-ico">⏳</span>
+            <span class="eco99-b2-txt">
+              <span class="eco99-b-name">用多久</span>
+              <span class="eco99-b-tag">${cN} 件物品 · 合计每日 ${fmt(cDay)}</span>
+              <span class="eco99-b-note">价格 ÷ 天数或次数，看清一件东西的真实成本，买得值不值心里有数。</span>
+            </span>
+            <span class="eco99-b-go eco99-b-go-sm">→</span>
+          </span>
+        </button>
+        <div class="eco99-link"></div>
+        <button type="button" class="eco99-bubble b3 c-orange" onclick="App.gotoWb('stock99')">
+          <span class="eco99-rim"></span>
+          <span class="eco99-b-in">
+            <span class="eco99-b-ico">🧺</span>
+            <span class="eco99-b2-txt">
+              <span class="eco99-b-name">多久吃</span>
+              <span class="eco99-b-tag">${sN} 件囤货${sSoon ? ` · ${sSoon} 件临期` : ' · 全部新鲜'}</span>
+              <span class="eco99-b-note">囤的食品饮品记下来，保质期状态一目了然，阿福临期前轻声提醒不浪费。</span>
+            </span>
+            <span class="eco99-b-go eco99-b-go-sm">→</span>
+          </span>
+        </button>
+      </div>
+    </div>`;
+  },
+  // v12.9.57 【记账】页（泡泡一目标页 · 像素收账风 × 轻氧玻璃）
+  //   数据口径与旧版完全一致：收支双模式（_lgTab）· 管家 50/30/20 · 消费卡自动入账 · 违规标记 · 每日 2 条任务
+  //   结构：顶部今日收支+本周趋势+阿福建议 → 中间数字抽屉记账入口 → 底部浮动账单条+阿福提醒区
+  _lgBookTab(k) { this._lgTab = k; this._sfx99 && this._sfx99('tap'); this.render_workbench(); },
+  _wbLedgerBook(wb, W) {
     const tab = this._lgTab || 'expense';
     const isIncome = tab === 'income';
-    const sum = Store.ledgerSummary();
-    const sumIn = Store.ledgerSummaryIncome();
-    const listAll = Store.getLedger().filter(x => x.date === Store.today());
+    const all = Store.getLedger();
+    const listAll = all.filter(x => x.date === Store.today());
     const list = listAll.filter(x => isIncome ? x.type === 'income' : x.type !== 'income').slice(0, 30);
     const cats = isIncome ? (CONFIG.ledgerIncomeCategories || []) : CONFIG.ledgerCategories;
     const reward = Store.checkTodayLedgerReward(false);
-    const monthBalance = sumIn.monthTotal - sum.monthTotal;
-    const todayOut = listAll.filter(x => x.type !== 'income').reduce((a, x) => a + (+x.amount || 0), 0);
+    const tOut = listAll.filter(x => x.type !== 'income').reduce((a, x) => a + (+x.amount || 0), 0);
+    const tIn = listAll.filter(x => x.type === 'income').reduce((a, x) => a + (+x.amount || 0), 0);
     const fmt = (v) => '¥' + (Math.round(v * 100) / 100).toFixed(2);
-    const secT = (t, n) => `<div class="ec99-sec-t"><i class="ec99-sec-dot"></i>${t}<em>${n || ''}</em></div>`;
-    // —— 不对称 Hero：今日任务（左数字右按钮 · 斜切装饰）——
-    let html = `<div class="ec99-page">
-      <div class="ec99-hero">
-        <div class="ec99-hero-top">
-          <div class="ec99-hero-meta">
-            <div class="ec99-hero-tag">💰 经济数据</div>
-            <div class="ec99-hero-desc">收支流水 · 管家 50/30/20 科学分配 · 消费卡自动入账</div>
-          </div>
-          <button class="ec99-hero-btn${reward.already ? ' ok' : ''}" onclick="App.wbClaim('ledger')" ${reward.already || !(reward.ok || reward.ready) ? 'disabled' : ''}>${reward.already ? '✓ 已达成' : '完成今日任务'}</button>
+    const sec = (t, em) => `<div class="eco99-sec"><i></i><b>${t}</b>${em ? `<em>${em}</em>` : ''}</div>`;
+    // —— 本周 7 日趋势（支出蓝柱 / 收入绿柱 双色迷你柱）——
+    const days = [];
+    for (let i = 6; i >= 0; i--) {
+      const dt = new Date(Date.now() - i * 86400000);
+      const ds = `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
+      const recs = all.filter(x => x.date === ds);
+      days.push({
+        lab: '日一二三四五六'[dt.getDay()],
+        out: recs.filter(x => x.type !== 'income').reduce((a, x) => a + (+x.amount || 0), 0),
+        in: recs.filter(x => x.type === 'income').reduce((a, x) => a + (+x.amount || 0), 0),
+      });
+    }
+    const weekOut = days.reduce((a, d) => a + d.out, 0);
+    const weekIn = days.reduce((a, d) => a + d.in, 0);
+    const weekNet = weekIn - weekOut;
+    const maxW = Math.max(1, ...days.map(d => Math.max(d.out, d.in)));
+    const sum = Store.ledgerSummary();
+    const sumIn = Store.ledgerSummaryIncome();
+    // —— 阿福建议（数据感知 · 每日两档：午间查漏 / 晚间复盘）——
+    let afuSay;
+    if (!listAll.length) afuSay = `今天一笔都还没记——从早餐、通勤或一杯奶茶开始，阿福陪你把今天的账记完整（午间和晚间我会各来提醒你一次）。`;
+    else if (listAll.length < (W.ledgerMinCount || 2)) afuSay = `今天已记 ${listAll.length} 笔，离小目标还差 ${(W.ledgerMinCount || 2) - listAll.length} 笔——睡前补齐，今天的账就是完整的。`;
+    else if (sum.violationTotal > 0) afuSay = `今日账已记满，做得很好。不过本月违规消费已累计 ${fmt(sum.violationTotal)}——阿福不责备，只是如实记录；冲动过去后，把这份预算挪给真正让你开心的事，好吗？`;
+    else if (weekNet < 0) afuSay = `本周支出 ${fmt(weekOut)} 已超过收入 ${fmt(weekIn)}——别慌，先看清钱的去向，再决定它的去向。非必要不出手，阿福陪你慢慢扳回来。`;
+    else afuSay = `今天记得很完整，本周结余 ${fmt(weekNet)} 为正——管住钱的流向，就管住了生活的秩序，继续保持！`;
+    // —— 页面 ——
+    let html = `<div class="eco99-page">
+      ${sec('今日收支', '阿福帮你算好了')}
+      <div class="eco99-glass eco99-jz-hero">
+        <div class="eco99-jz-row">
+          <div class="eco99-jz-pill out"><b>${fmt(tOut)}</b><span>今日支出</span></div>
+          <div class="eco99-jz-pill in"><b>${fmt(tIn)}</b><span>今日收入</span></div>
+          <div class="eco99-jz-pill net"><b class="${weekNet < 0 ? 'neg' : ''}">${weekNet < 0 ? '-' : '+'}${fmt(Math.abs(weekNet))}</b><span>本周结余</span></div>
         </div>
-        <div class="ec99-hero-kpi">
-          <span>今日经济数据</span>
-          <b>${reward.count || 0}<i>/${W.ledgerMinCount || 2} 条</i></b>
-          <small>${this.esc(reward.msg || '')}</small>
+        <div class="eco99-week">
+          ${days.map(d => `<div class="d">
+            <div class="bars"><i class="bar" style="height:${Math.max(4, Math.round(d.out / maxW * 46))}px"></i><i class="bar in" style="height:${Math.max(4, Math.round(d.in / maxW * 46))}px"></i></div>
+            <div class="lab">${d.lab}</div>
+          </div>`).join('')}
+        </div>
+        <div class="eco99-week-legend"><span><i class="lg-out"></i>支出</span><span><i class="lg-in"></i>收入</span><span>本周 ${fmt(weekOut)} / ${fmt(weekIn)}</span></div>
+        <div class="eco99-afu">${this._afu99AvatarHtml(34)}<p>${this.esc(afuSay)}</p></div>
+      </div>`;
+    // —— 中间：数字抽屉（创意记账入口 · 像素硬币）——
+    html += sec(isIncome ? '记一笔 · 收入' : '记一笔 · 支出', `今日 ${reward.count || 0}/${W.ledgerMinCount || 2} 条${reward.already ? ' · ✓ 已达标' : ''}`) + `
+      <div class="eco99-drawers">
+        <button type="button" class="eco99-drawer${!isIncome ? ' on' : ''}" onclick="App._lgBookTab('expense')">
+          <b>💸 记支出</b>
+          <small>花出去的每一笔，都帮你算清楚</small>
+          <span class="eco99-coins"><i class="eco99-coin"></i><i class="eco99-coin c2"></i><i class="eco99-coin c3"></i></span>
+        </button>
+        <button type="button" class="eco99-drawer inc${isIncome ? ' on' : ''}" onclick="App._lgBookTab('income')">
+          <b>💰 记收入</b>
+          <small>工资 · 稿费 · 红包——进账也要记</small>
+          <span class="eco99-coins"><i class="eco99-coin"></i><i class="eco99-coin c2"></i><i class="eco99-coin c3"></i></span>
+        </button>
+      </div>`;
+    // —— 记账表单（蓝白渐变流体边框玻璃 · 分类 chips）——
+    html += `<div class="eco99-glass eco99-jz-form">
+        <div class="eco99-jz-form-row">
+          <label class="eco99-jz-amt">${isIncome ? '收入金额(元)' : '支出金额(元)'}<input type="number" id="wbLgAmt" class="input" min="0.01" step="0.01" placeholder="0.00"></label>
+          <label class="eco99-jz-date">日期<input type="date" id="wbLgDate" class="input" value="${Store.today()}"></label>
+        </div>
+        <label class="eco99-jz-cat">${isIncome ? '收入分类（点击选择）' : '支出分类（点击选择）'}<div class="eco99-jz-chips">
+          ${cats.map(c => `<span class="eco99-jz-chip${this._curCat === c.id ? ' on' : ''}" onclick="App.setLedgerCat('${c.id}')">${c.icon} ${this.esc(c.name)}</span>`).join('')}
+        </div></label>
+        <label class="eco99-jz-note">备注(可选)<input type="text" id="wbLgNote" class="input" placeholder="${isIncome ? '如：10月工资 / 投稿稿费...' : '在哪消费的 / 购买什么...'}"></label>
+        <div class="eco99-jz-acts">
+          <button class="btn eco99-jz-save" onclick="App.wbSaveLedger()">💾 记一笔${isIncome ? '收入' : ''}</button>
+          ${reward.ok || reward.ready ? `<button class="btn btn-ghost eco99-jz-claim" onclick="App.wbClaim('ledger')" ${reward.already ? 'disabled' : ''}>${reward.already ? '✓ 今日已达标' : '领取今日任务'}</button>` : ''}
         </div>
       </div>`;
-    // —— 不对称 Bento 总览：本月支出占左侧大格（跨两行）· 收入/结余右侧错落 ——
-    html += secT('本月总览') + `<div class="ec99-bento">
-        <div class="ec99-cell big">
-          <span class="ec99-cell-n">💸 本月支出</span>
-          <b class="ec99-amt-out">${fmt(sum.monthTotal)}</b>
-          <span class="ec99-cell-sub">今日已支出 ${fmt(todayOut)} · ${listAll.filter(x => x.type !== 'income').length} 笔</span>
-        </div>
-        <div class="ec99-cell">
-          <span class="ec99-cell-n">💰 本月收入</span>
-          <b class="ec99-amt-in">${fmt(sumIn.monthTotal)}</b>
-        </div>
-        <div class="ec99-cell">
-          <span class="ec99-cell-n">${monthBalance >= 0 ? '🌹 本月结余' : '⚠️ 本月超支'}</span>
-          <b style="color:${monthBalance >= 0 ? '#059669' : '#E11D48'}">${fmt(Math.abs(monthBalance))}</b>
-        </div>
-      </div>
-      <div class="ec99-strip"><span>正常累计支出 <b>${fmt(sum.total - sum.violationTotal)}</b></span><span>累计收入 <b>${fmt(sumIn.total)}</b></span><span>违规支出 <b style="color:#E11D48">${fmt(sum.violationTotal)}</b></span></div>`;
-    // —— 管家可支配收入分配（50/30/20 · 功能原样保留）——
-    html += secT('管家' + this._butlerName + ' · 可支配收入分配') + this._butlerBudgetCard('wbIncomeInput', 'render_workbench');
-    // —— 记一笔：不对称收支切换（左宽右窄）——
-    html += secT(isIncome ? '记一笔 · 收入' : '记一笔 · 支出') + `<div class="ec99-form">
-      <div class="ec99-tabs">
-        <button type="button" class="ec99-tab${!isIncome ? ' on' : ''}" onclick="App._lgTab='expense';App.render_workbench()">💸 记支出<em>消费 · 自动入账</em></button>
-        <button type="button" class="ec99-tab${isIncome ? ' on' : ''}" onclick="App._lgTab='income';App.render_workbench()">💰 记收入<em>工资 · 稿费…</em></button>
-      </div>
-      <div class="ec99-form-row">
-        <label class="ec99-f-amt">${isIncome ? '收入金额(元)' : '支出金额(元)'}<input type="number" id="wbLgAmt" class="input" min="0.01" step="0.01" placeholder="输入金额"></label>
-        <label class="ec99-f-date">日期<input type="date" id="wbLgDate" class="input" value="${Store.today()}"></label>
-      </div>
-      <label class="ec99-f-cat">${isIncome ? '收入分类（点击切换）' : '支出分类（点击切换）'}<div class="ec99-chips">
-        ${cats.map(c => `<span class="ec99-chip${this._curCat === c.id ? ' on' : ''}" onclick="App.setLedgerCat('${c.id}')">${c.icon} ${this.esc(c.name)}</span>`).join('')}
-      </div></label>
-      <label class="ec99-f-note">备注(可选)<input type="text" id="wbLgNote" class="input" placeholder="${isIncome ? '如：10月工资 / 投稿稿费...' : '在哪消费的 / 购买什么...'}"></label>
-      <button class="btn ec99-save" onclick="App.wbSaveLedger()">💾 记一笔${isIncome ? '收入' : ''}</button>
-    </div>`;
-    // —— 今日流水：左竖条 + 图标 + 双行文字 + 金额（不对称列表）——
-    html += secT(`今日${isIncome ? '收入' : '支出'}流水`, `${list.length} 条`);
-    if (!list.length) html += `<div class="ec99-empty">${isIncome ? '今天还没记收入，发工资时记得回来记一笔' : '今天还没记经济数据，先记两笔试试'}</div>`;
+    // —— 底部：最近记录（浮动账单条）——
+    html += sec(`今日${isIncome ? '收入' : '支出'}账单`, `${list.length} 条`);
+    if (!list.length) html += `<div class="eco99-jz-empty">${isIncome ? '今天还没记收入，发工资时记得回来记一笔' : '今天还没记账——拉开上面的抽屉，先记两笔试试'}</div>`;
     list.forEach(l => {
       const cat = (cats || []).find(c => c.id === l.category) || {};
       const isInc = l.type === 'income';
-      html += `<div class="ec99-li${isInc ? ' in' : ''}${l.violation ? ' bad' : ''}">
-        <i></i>
-        <span class="ec99-li-ico">${cat.icon || '💸'}</span>
-        <span class="ec99-li-bd">
-          <b>${this.esc(cat.name || l.category || '')}${l.violation ? ' <em class="ec99-bad-t">⚠违规</em>' : ''}</b>
+      html += `<div class="eco99-bill">
+        <span class="bi">${cat.icon || (isInc ? '💰' : '💸')}</span>
+        <span class="bd">
+          <b>${this.esc(cat.name || l.category || '')}${l.violation ? ' <em class="eco99-bad">⚠违规</em>' : ''}</b>
           <small>${l.note ? this.esc(l.note) + ' · ' : ''}${l.date}</small>
-          ${!isInc ? `<small class="ec99-li-say">${this._afu99AvatarHtml(13, 'pxafu-inline')}${this.esc(this._butlerSpendAdvice(l))}</small>` : ''}
+          ${!isInc ? `<small class="say">${this.esc(this._butlerSpendAdvice(l))}</small>` : ''}
         </span>
-        <b class="ec99-li-amt${isInc ? ' in' : ''}">${isInc ? '+' : '-'}¥${Number(l.amount).toFixed(2)}</b>
+        <b class="ba${isInc ? ' in' : ''}${l.violation ? ' vio' : ''}">${isInc ? '+' : '-'}¥${Number(l.amount).toFixed(2)}</b>
       </div>`;
     });
-    // 今日收入摘要（支出 tab 时也显示一笔收入概览，双向可见）
+    // 支出 tab 时展示今日收入概览（双向可见）
     if (!isIncome) {
       const todayIn = listAll.filter(x => x.type === 'income');
       if (todayIn.length) {
-        html += secT('今日收入概览', `${todayIn.length} 条`);
+        html += sec('今日收入概览', `${todayIn.length} 条`);
         todayIn.forEach(l => {
           const cat = (CONFIG.ledgerIncomeCategories || []).find(c => c.id === l.category) || {};
-          html += `<div class="ec99-li in">
-            <i></i>
-            <span class="ec99-li-ico">${cat.icon || '💰'}</span>
-            <span class="ec99-li-bd"><b>${this.esc(cat.name || l.category || '')}</b><small>${l.note ? this.esc(l.note) + ' · ' : ''}${l.date}</small></span>
-            <b class="ec99-li-amt in">+¥${Number(l.amount).toFixed(2)}</b>
+          html += `<div class="eco99-bill">
+            <span class="bi">${cat.icon || '💰'}</span>
+            <span class="bd"><b>${this.esc(cat.name || l.category || '')}</b><small>${l.note ? this.esc(l.note) + ' · ' : ''}${l.date}</small></span>
+            <b class="ba in">+¥${Number(l.amount).toFixed(2)}</b>
           </div>`;
         });
       }
     }
+    // —— 管家阿福：50/30/20 分配 + 提醒区 ——
+    html += sec('管家' + this._butlerName + ' · 分配与提醒') + `
+      <div class="eco99-afu-wrap">${this._butlerBudgetCard('wbIncomeInput', 'render_workbench')}
+        <div class="eco99-afu eco99-afu-remind">${this._afu99AvatarHtml(28)}<p>阿福每日 <b>12:00 午间查漏</b> 与 <b>20:00 晚间复盘</b> 各提醒记账一次；本月支出 ${fmt(sum.monthTotal)} · 收入 ${fmt(sumIn.monthTotal)}，每一笔消费建议都为警惕消费主义而生。</p></div>
+      </div>`;
     // v2026.0906 消费建议卡：科学消费 / 警惕消费主义（20 篇每日轮换，功能原样保留）
     html += this.renderFinanceArticle();
     html += `<div style="margin-top:14px"><button class="btn btn-ghost" onclick="App.navBack()">← 返回上一页</button></div></div>`;

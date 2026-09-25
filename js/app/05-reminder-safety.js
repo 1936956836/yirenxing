@@ -30,7 +30,7 @@ Object.assign(App, {
     const mins = now.getHours() * 60 + now.getMinutes();
     const day = (Store.getHabit99().days || {})[Store.today()] || {};
     const medTaken = !!(day.medicine && (day.medicine.ts || (day.medicine.drugs || []).length));
-    const hasCritical = (CONFIG.medications || []).some(m => m.critical);
+    const hasCritical = (this._medsForMe ? this._medsForMe() : (CONFIG.medications || [])).some(m => m.critical);   // v12.9.50 账号口径：其他账号随其 meds99 清单（默认空=不提醒）
     const mealDone = (k) => !!(day[k] && (day[k].ts || day[k].done));
     // ① 关键药 21:30 预提醒（未服药才提）
     if (hasCritical && mins >= 1290 && mins < 1320 && !medTaken)

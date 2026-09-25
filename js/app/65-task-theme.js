@@ -6,7 +6,7 @@ Object.assign(App, {
   // 打卡金币实际由 _onPunchReward 自动发放（见 15-utils.js），手动领取 UI 属已废弃体系。
   // 今日待办清单仍在首页（00-core.js showDailyTodoPrompt）与记录板块·管家阿福展示。
   // v1.0.1 休息模式已彻底移除 —— 相关时间函数（_worldResting/_isAnniversary/_nightWindow/_nightDecorate/_worldRestingCardHTML 等）随之删除；
-  // （农场/牧场/柯基等挂机体系已随 v7.0 拆分迁出，主程序不再保留相关夜间逻辑）
+  // （农场/牧场等挂机体系已随 v7.0 拆分迁出，主程序不再保留相关夜间逻辑）
   // ===== v2.0.8 七时段主题系统（按现实时间自动切换 UI 配色，一天最多 7 色）=====
   // 时段：黎明5-8 / 早晨8-11 / 正午11-14 / 午后14-17 / 黄昏17-20 / 暮色20-23 / 深夜23-5
   // 原理：按小时算出主题名 → <body data-ttheme="xxx"> → styles.css 末尾 7 个主题块

@@ -12,9 +12,13 @@
   // ==================== 像素绘制引擎（低分辨率作画 + 禁平滑放大 = 8-bit 硬边颗粒）====================
   const px = (w, h, scale, draw) => {
     const s = document.createElement('canvas'); s.width = w; s.height = h;
-    draw(s.getContext('2d'));
+    const c2 = s.getContext('2d');
+    // v12.9.54 守卫：canvas 2d 上下文不可用（极端环境）时返回占位，不让加载期绘制中断整个 App 脚本
+    if (!c2) return '';
+    draw(c2);
     const o = document.createElement('canvas'); o.width = w * scale; o.height = h * scale;
     const k = o.getContext('2d');
+    if (!k) return '';
     k.imageSmoothingEnabled = false;
     k.drawImage(s, 0, 0, o.width, o.height);
     return o.toDataURL();

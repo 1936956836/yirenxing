@@ -88,6 +88,7 @@ Object.assign(App, {
     if (opts.skipHome) return '';
     const DOCK_VIEWS = { habit: 1, record: 1, home99: 1, rpg99: 1 }; // rpg99：个人中心自带悬浮返回按钮（v12.9.31b）
     if (DOCK_VIEWS[view]) return '';
+    if (view === 'ledger') return ''; // v12.9.57 经济数据三泡泡主页：头部自带轻氧返回按钮（避免双按钮）
     return `<div style="margin-bottom:10px">
       <button class="btn btn-ghost" onclick="App.navBack()">← 返回上一页</button>
     </div>`;
@@ -137,6 +138,11 @@ Object.assign(App, {
       case 'study99': return this._wbStudy99(wb, W); // v12.9 学习数据：记录站 + 练习站（87-study99.js）
       case 'record': return this._wbRecord(wb, W);
       case 'ta99': return this._wbTa99(wb, W); // v12.8 Ta·情侣空间：邀请码绑定·共享·情侣签到·纪念日·互相打卡（85-ta99.js）
+      // v12.9.49 新页：物品使用成本 / 囤货保质期 / 阿福提醒设置
+      case 'cost99': return this._wbCost99(wb, W);     // 🧾 物品使用成本（104-cost99.js · 经济数据子功能）
+      case 'stock99': return this._wbStock99(wb, W);   // 📦 囤货保质期（105-stock99.js · 经济数据子功能）
+      case 'notify99': return this._wbRemind99(wb, W);  // 🔔 阿福提醒设置 + 消息中心（106-notify99.js）
+      case 'period99': return this._wbPeriod99(wb, W); // 🌷 经期数据（108-period99.js · 女生专属 · 档案性别=女 才解锁）
       case 'sparks99': return this._wbSparks99(wb, W); // v11.2 灵光：灵光乍现时刻（无需完成的憧憬）
       case 'regrets99': return this._wbRegrets99(wb, W); // v11.3 憾潮：后悔的事·殴打发泄
       case 'footprints99': return this._wbFootprints99(wb, W); // v11.3 足迹：走过的中国·34省点亮
@@ -163,6 +169,9 @@ Object.assign(App, {
       case 'report99': { if (this._dc99) this._dc99.tab = 'report99'; return this._wbDataCenter99(wb, W); } // v12.9.11 报告数据（原「报告中心」→ 数据中心 tab，旧书签安全重定向）
       case 'me': return this._wbHome99(wb, W); // v11.8：原「空间·我」页升级为小家（旧书签安全重定向；档案迁数据中心、系统日志迁同步页）
       case 'ledger': return this._wbLedger(wb, W);
+      case 'ledger99': return this._wbLedgerBook(wb, W); // v12.9.57 记账页（经济数据泡泡一 · 像素收账风轻氧页）
+      case 'voice99': return this._wbVoice99(wb, W);    // v12.9.59 阿福语音对话·按住说话本地闭环（长按首页阿福图标进入 · 109-voice99.js）
+      case 'poop99': return this._wbPoop99(wb, W);      // v12.9.64 如厕记录·拉了吗（长按记录页沙盘房子进入 · 112-poop99.js · 白名单账号可见）
       case 'diary': return this._wbDiary(wb, W);
       case 'todo': return this._wbTodo(wb, W);
       case 'countdown': return this._wbCountdown(wb, W); // v6.8 倒数日（自待办拆出）

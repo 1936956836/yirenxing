@@ -1,12 +1,16 @@
-// 100-solomusic99.js —— v12.9.46 【独行音乐】开源聚合搜索 + 像素可视化播放器
+// 100-solomusic99.js —— v12.9.71 【独行音乐】开源聚合搜索 + 像素可视化播放器
 // [功能组] G5-情感陪伴 / G6-专注模式（音乐域：底部【首页】旋钮长按 1 秒进入本页）
 //
 // 设计（用户规则 · 独行音乐）：
 //   · 入口：底部导航【首页】圆形旋钮长按 1 秒（液体流动音 + 圆幕渐变过渡，与权限管理一致）
 //   · 音乐资源：开源聚合 API 直连（已验证 CORS 全开 · 免 key · 免后端代理）
 //       搜索：GD Studio 聚合（网易云 / QQ音乐 / 酷狗 / 酷我 四平台，播放链接播放时即时解析、失效自动跳过）
-//       歌单：各平台歌单分享链接 → Meting 聚合接口整单导入；汽水音乐（v12.9.46b）→ 拉分享页
-//             解析 _ROUTER_DATA 曲目清单，逐曲跨平台智能匹配可播放音源（独家曲跳过）
+//       歌单：v12.9.71 五平台链接导入——网易云/QQ/酷狗/酷我走 Meting 整单导入，
+//             汽水音乐重做（旧公共代理链实测全灭致导入失效）：安卓端经 Sm99Http 原生桥
+//             （iOS UA · 无 CORS 限制）拉分享页解析 _ROUTER_DATA 曲目清单，网页版降级代理链；
+//             汽水曲目优先存 p:'qishui' 直链播放（失效自动跨平台匹配兜底），独家曲跳过
+//       漫游：v12.9.71 新增【🌌 漫游】Tab——上下滑动刷随机歌曲卡片，曲源池五大平台
+//             （四平台 GD 随机关键词 + 汽水种子歌单/已导入汽水歌单混池），点卡片即播
 //       本地：MP3 / WAV / FLAC 等文件导入（IndexedDB 落盘，刷新不丢）；支持拖放
 //       内置：免版权曲库——Web Audio 程序合成原创芯片曲目（可按风格/情绪筛选，可商用零版权风险）
 //   · 播放器：播放/暂停 · 上一首/下一首 · 进度条拖拽 · 音量 · 播放模式（单曲循环/列表循环/随机）
@@ -31,6 +35,7 @@ Object.assign(App, {
     { k: 'tencent', n: 'QQ音乐', dot: '#12b7f5' },
     { k: 'kugou',   n: '酷狗',   dot: '#2ba5f7' },
     { k: 'kuwo',    n: '酷我',   dot: '#ffb628' },
+    { k: 'qishui',  n: '汽水音乐', dot: '#ff5e7e' },   // v12.9.71 五大平台：直链播放经原生桥解析分享页
   ],
   SM99_PRESET: [
     { k: 'terrain',   n: '像素地形', ico: '🏔️' },
@@ -166,9 +171,123 @@ Object.assign(App, {
     return this._sm99ApiQ;
   },
   async _sm99Resolve(song) {
+    // v12.9.71 汽水源：拉单曲分享页解析可播直链（douyinvod.com · audio/mp4 · 实测 206 可播）；
+    //   加密曲（encrypt:true）/ VIP 曲分享页无直链 → 抛错由 _sm99QsFallback 跨平台匹配兜底
+    if (song.p === 'qishui') {
+      const u = await this._sm99QsTrackUrl(song.id);
+      if (u) return { url: u, br: 128000 };
+      throw new Error('汽水直链不可用');
+    }
     const j = await this._sm99Api(this.SM99_API + '?types=url&source=' + song.p + '&id=' + encodeURIComponent(song.id));
     if (!j || !j.url) throw new Error('无可用音源');
     return j;
+  },
+
+  // ==================== v12.9.71 汽水音乐解析（原生桥 + 分享页 SSR）====================
+  // 通道优先级：安卓 Sm99Http 原生桥（iOS UA · 无 CORS · 实测稳定）→ 公共代理链（网页版兜底）
+  _sm99HttpPlg() { return this._nat99Plg ? this._nat99Plg('Sm99Http') : null; },
+  _sm99QsProxies: [
+    (u) => 'https://api.allorigins.win/raw?url=' + encodeURIComponent(u),
+    (u) => 'https://api.codetabs.com/v1/proxy?quest=' + encodeURIComponent(u),
+    (u) => 'https://corsproxy.io/?url=' + encodeURIComponent(u),
+  ],
+  async _sm99HttpGet(url) {
+    // 1) 原生桥（安卓 APK）
+    const P = this._sm99HttpPlg();
+    if (P && P.fetch) {
+      try {
+        const r = await P.fetch({ url });
+        if (r && r.ok && r.html && r.html.length > 800) return r.html;
+      } catch (e) {}
+    }
+    // 2) 公共代理链（网页版 / 原生桥失败兜底）
+    for (const px of this._sm99QsProxies) {
+      try {
+        const ctrl = new AbortController();
+        const to = setTimeout(() => { try { ctrl.abort(); } catch (e) {} }, 15000);
+        const res = await fetch(px(url), { signal: ctrl.signal });
+        clearTimeout(to);
+        if (res.ok) {
+          const t = await res.text();
+          if (t && t.length > 800 && t.indexOf('_ROUTER_DATA') !== -1) return t;
+        }
+      } catch (e) {}
+    }
+    return null;
+  },
+  // 汽水分享页直连地址（实测无需短链中转 · 无需登录）
+  _sm99QsShareUrl(kind, id) {
+    return 'https://music.douyin.com/qishui/share/' + (kind === 'playlist' ? 'playlist?playlist_id=' : 'track?track_id=') + encodeURIComponent(id);
+  },
+  // 平衡大括号扫描提取 _ROUTER_DATA = {...}（避免正则截断 JSON；沿用旧版已验证算法）
+  _qs99Router(html) {
+    const i = html.indexOf('_ROUTER_DATA');
+    if (i < 0) return null;
+    const s = html.indexOf('{', i);
+    if (s < 0) return null;
+    let depth = 0, inStr = false, esc = false;
+    for (let j = s; j < html.length; j++) {
+      const ch = html[j];
+      if (inStr) {
+        if (esc) esc = false;
+        else if (ch === '\\') esc = true;
+        else if (ch === '"') inStr = false;
+      } else {
+        if (ch === '"') inStr = true;
+        else if (ch === '{') depth++;
+        else if (ch === '}') { depth--; if (!depth) { try { return JSON.parse(html.slice(s, j + 1)); } catch (e) { return null; } } }
+      }
+    }
+    return null;
+  },
+  // 歌单分享页 → { title, tracks:[{id,n,a,al}] }（loaderData.playlist_page.medias[].entity.track）
+  async _sm99QsPlaylist(id) {
+    const html = await this._sm99HttpGet(this._sm99QsShareUrl('playlist', id));
+    if (!html) return null;
+    const data = this._qs99Router(html);
+    const pp = data && data.loaderData && data.loaderData.playlist_page;
+    if (!pp) return null;
+    const out = [];
+    (pp.medias || []).forEach(m => {
+      try {
+        const t = m && m.entity && m.entity.track;
+        if (!t || !t.id || !t.name) return;
+        const arts = Array.isArray(t.artists) ? t.artists.map(x => (x && x.name) || '').filter(Boolean).join(' / ') : '';
+        out.push({ id: String(t.id), n: String(t.name), a: arts || '未知歌手', al: (t.album && t.album.name) || '' });
+      } catch (e) {}
+    });
+    const pi = pp.playlistInfo || {};
+    return { title: pi.title || '', count: pi.count_tracks || out.length, tracks: out };
+  },
+  // 单曲分享页 → 可播直链（audioWithLyricsOption.url · encrypt:false 才可播）
+  async _sm99QsTrackUrl(id) {
+    const html = await this._sm99HttpGet(this._sm99QsShareUrl('track', id));
+    if (!html) return null;
+    const data = this._qs99Router(html);
+    const aw = data && data.loaderData && data.loaderData.track_page && data.loaderData.track_page.audioWithLyricsOption;
+    if (!aw || !aw.url || aw.encrypt === true) return null;
+    return aw.url;
+  },
+  _qs99Norm(x) { return String(x || '').toLowerCase().replace(/[\s'’·\-—_/\\()（）\[\]【】.。,，、!！?？:：;；"“”`~*]/g, ''); },
+  _qs99Pick(arr, t) {
+    const tn = this._qs99Norm(t.n);
+    let best = null, bs = 0;
+    for (const it of (arr || [])) {
+      if (!it || !it.id || !it.name) continue;
+      const n2 = this._qs99Norm(it.name);
+      let sc = 0;
+      if (n2 === tn) sc = 1;
+      else if (n2.length > 2 && tn.length > 2 && (n2.includes(tn) || tn.includes(n2))) sc = .75;
+      if (!sc) continue;
+      const a2 = this._qs99Norm(Array.isArray(it.artist) ? it.artist.join('') : it.artist);
+      const ta = this._qs99Norm(t.a);
+      if (ta && a2) {
+        if (a2.includes(ta) || ta.includes(a2)) sc += .15;
+        else sc -= .3;
+      }
+      if (sc > bs) { bs = sc; best = it; }
+    }
+    return bs >= .6 ? best : null;
   },
 
   // ==================== Web Audio 基础（主增益 → 频谱仪 → 输出 · 合成器回声链）====================
@@ -319,6 +438,7 @@ Object.assign(App, {
       plId, dead: {}, lrc: null, lrcIdx: -1, lrcTry: 0,
       cur: null, playing: false, el: null, // el: 'A'|'B'|'S'
       zeroFrm: 0, beat: 0, beatT: 0, avgLow: 40, skip: 0, synTag: '全部',
+      roam: null,                                            // v12.9.71 漫游：{ queue, i, loading, qsPool }
     };
     return this._sm99Rt;
   },
@@ -381,9 +501,28 @@ Object.assign(App, {
       this._sm99PaintNp();
       this._sm99LyricFetch(song);                 // 歌词后台并行拉取
     } catch (e) {
-      // 解析失败 / 播放失败 → 标死 + 自动跳下一首
+      // 解析失败 / 播放失败 → 汽水源先跨平台匹配兜底（独家曲/加密曲分享页无直链），其余标死跳下一首
+      if (song.p === 'qishui' && !song.qsFb) { this._sm99QsFallback(song, list, i); return; }
       this._sm99MarkDead(song);
     }
+  },
+  // 汽水曲直链不可用 → 跨平台（网易云→QQ）搜同名曲智能匹配替换播放（v12.9.71）
+  async _sm99QsFallback(song, list, i) {
+    this._flash('🧩 汽水直链不可用，正在跨平台匹配音源…');
+    const kw = String(song.n || '') + ' ' + String(song.a || '').split(' / ')[0];
+    for (const src of ['netease', 'tencent']) {
+      try {
+        const j = await this._sm99Api(this.SM99_API + '?types=search&source=' + src + '&name=' + encodeURIComponent(kw) + '&count=6');
+        const pick = this._qs99Pick(Array.isArray(j) ? j : [], song);
+        if (pick) {
+          const rep = { s: 'r', p: src, id: String(pick.id), n: song.n, a: song.a, al: song.al || '', qsFb: true, u: '' };
+          rep.u = this._sm99Uid(rep);
+          this._sm99PlaySong(rep, list || [rep], i || 0);
+          return;
+        }
+      } catch (e) {}
+    }
+    this._sm99MarkDead(song);
   },
   // 播放列表上下文：歌单内播放
   _sm99PlayPlAt(i) {
@@ -589,13 +728,16 @@ Object.assign(App, {
     this._sm99TabBody('pl');
   },
 
-  // ==================== 歌单链接导入（Meting 聚合 + 汽水音乐）====================
+  // ==================== 歌单链接导入（v12.9.71 五平台：Meting 四平台 + 汽水分享页）====================
+  // 统一链路：链接识别 → 整单拉取 → 建本地歌单 → 后台逐曲校验音源（失效标记 ✕ · 播放时自动跳过）
+  _sm99ImpSay(x) { const el = document.getElementById('sm99QsProg'); if (el) { el.style.display = 'block'; el.innerHTML = x; } else this._flash(x); },
+  _sm99ImpHide() { const el = document.getElementById('sm99QsProg'); if (el) { el.style.display = 'none'; el.innerHTML = ''; } },
   async _sm99ImportLink() {
     const inp = document.getElementById('sm99Link');
     const raw = (inp ? inp.value : '').trim();
-    if (!raw) { this._flash('💡 粘贴网易云/QQ/酷狗/酷我/汽水的歌单分享链接'); return; }
+    if (!raw) { this._flash('💡 粘贴网易云 / QQ / 酷狗 / 酷我 / 汽水的歌单分享链接'); return; }
     if (!navigator.onLine) { this._flash('⚠️ 离线状态无法导入歌单'); return; }
-    // v12.9.46b 汽水音乐：分享链接无公开聚合接口——拉分享页解析曲目后跨平台智能匹配
+    // 汽水音乐：分享文案/短链/长链统一走分享页解析（原生桥优先）
     if (/qishui\.douyin\.com|music\.douyin\.com\/qishui|luna\.douyin\.com/.test(raw)) {
       this._sm99ImportQishui(raw);
       return;
@@ -610,7 +752,7 @@ Object.assign(App, {
       this._flash('⚠️ 暂无法识别该链接——请打开歌单页复制完整链接（163cn.tv 短链请先在浏览器打开再复制长链接）');
       return;
     }
-    this._flash('⏳ 正在拉取歌单…');
+    this._sm99ImpSay('⏳ 正在拉取歌单…');
     try {
       const j = await this._sm99Api(this.SM99_METING + '?server=' + p + '&type=playlist&id=' + encodeURIComponent(id));
       if (!Array.isArray(j) || !j.length) throw new Error('empty');
@@ -628,131 +770,221 @@ Object.assign(App, {
       rt.plId = pl.id;
       this._sm99Save(d);
       if (inp) inp.value = '';
-      this._flash('🎉 导入成功：「' + nm + '」共 ' + songs.length + ' 首');
-      this._sm99TabBody('pl');
+      this._sm99TabBody('pl');                                     // 重渲染后进度元素重建，再写回结果
+      this._sm99ImpSay('🎉 导入成功：「' + nm + '」共 ' + songs.length + ' 首 · 正在后台校验音源…');
+      this._sm99VerifyBatch(songs, nm);                            // 后台逐曲校验失效音源
     } catch (e) {
-      this._flash('⚠️ 歌单拉取失败（接口限流或歌单需权限），稍后再试或手动搜索添加');
+      this._sm99ImpSay('⚠️ 歌单拉取失败（接口限流或歌单需权限），稍后再试或手动搜索添加');
     }
   },
 
-  // ==================== 汽水音乐歌单导入（v12.9.46b）====================
-  // 汽水（字节系）无公开聚合接口且音源加密——方案：拉分享页解析 _ROUTER_DATA 取曲目清单，
-  // 逐曲跨平台（网易云 → QQ）智能匹配同名同歌手的可播放音源；独家/翻唱曲无法匹配则跳过。
-  // 分享页跨域：走三重公共 CORS 代理链（allorigins → codetabs → corsproxy），任一成功即用。
-  SM99_QS_PROXIES: [
-    (u) => 'https://api.allorigins.win/raw?url=' + encodeURIComponent(u),
-    (u) => 'https://api.codetabs.com/v1/proxy?quest=' + encodeURIComponent(u),
-    (u) => 'https://corsproxy.io/?url=' + encodeURIComponent(u),
-  ],
-  // 平衡大括号扫描提取 _ROUTER_DATA = {...}（避免正则截断 JSON）
-  _qs99Router(html) {
-    const i = html.indexOf('_ROUTER_DATA');
-    if (i < 0) return null;
-    const s = html.indexOf('{', i);
-    if (s < 0) return null;
-    let depth = 0, inStr = false, esc = false;
-    for (let j = s; j < html.length; j++) {
-      const ch = html[j];
-      if (inStr) {
-        if (esc) esc = false;
-        else if (ch === '\\') esc = true;
-        else if (ch === '"') inStr = false;
-      } else {
-        if (ch === '"') inStr = true;
-        else if (ch === '{') depth++;
-        else if (ch === '}') { depth--; if (!depth) { try { return JSON.parse(html.slice(s, j + 1)); } catch (e) { return null; } } }
+  // 后台音源校验（v12.9.71 · 自动过滤失效音源）：逐曲探测可播性（GD 限速队列），
+  //   失效 → rt.dead 标记（列表显示 ✕ 失效 · 播放自动跳过）；不阻塞正常使用，可随时离开本页
+  _sm99VerifyTask: null,
+  async _sm99VerifyBatch(songs, plName) {
+    const rt = this._sm99RtInit();
+    const list = songs.slice(0, 200);                               // 上限保护（超大队列太慢）
+    let dead = 0;
+    for (let i = 0; i < list.length; i++) {
+      if (this._sm99Rt.tab !== 'pl' && i > 0 && i % 10 === 0) {    // 用户已切走：静默完成剩余校验
+        try { this._sm99ImpHide(); } catch (e) {}
+      }
+      const s = list[i];
+      let ok = false;
+      if (s.p === 'qishui') ok = !!(await this._sm99QsTrackUrl(s.id));
+      else {
+        try {
+          const j = await this._sm99Api(this.SM99_API + '?types=url&source=' + s.p + '&id=' + encodeURIComponent(s.id));
+          ok = !!(j && j.url);
+        } catch (e) {}
+      }
+      if (!ok) { rt.dead[s.u || this._sm99Uid(s)] = true; dead++; }
+      const el = document.getElementById('sm99QsProg');
+      if (el && el.style.display !== 'none' && this._sm99Rt.tab === 'pl') {
+        el.innerHTML = `🔎 音源校验 ${i + 1}/${list.length} · 已发现失效 ${dead} 首 · 《${this.esc(String(s.n || '').slice(0, 12))}》${ok ? '✓' : '✕'}`;
       }
     }
-    return null;
-  },
-  // 递归收集曲目：qishui 分享页的字段名随版本浮动（track_infos/tracks/…），
-  //   泛化识别「有歌名 + 有歌手 + 像时长」的节点即可，天然兼容单曲与歌单分享
-  _qs99Tracks(node, out, seen) {
-    if (!node || typeof node !== 'object') return;
-    if (Array.isArray(node)) { node.forEach(x => this._qs99Tracks(x, out, seen)); return; }
-    const name = typeof node.name === 'string' ? node.name : (typeof node.track_name === 'string' ? node.track_name : (node.trackName && typeof node.trackName === 'string' ? node.trackName : null));
-    if (name && name.length >= 1 && name.length <= 90) {
-      let arts = node.artists || node.artist || (node.track && (node.track.artists || node.track.artist)) || null;
-      if (arts && !Array.isArray(arts) && typeof arts === 'object') arts = arts.name ? [arts] : null;
-      let aStr = '';
-      if (Array.isArray(arts)) aStr = arts.map(x => typeof x === 'string' ? x : (x && x.name) || '').filter(Boolean).join(' / ');
-      else if (typeof arts === 'string') aStr = arts;
-      let al = node.album;
-      if (al && typeof al === 'object') al = al.name || '';
-      const dur = node.duration || node.interval || (node.track && node.track.duration) || 0;
-      if (aStr && (!dur || dur > 25)) {                       // 时长（秒或毫秒）过短的是预览片段/铃声
-        const key = name + '|' + aStr;
-        if (!seen[key]) { seen[key] = 1; out.push({ n: name, a: aStr, al: String(al || '') }); }
-      }
+    const el = document.getElementById('sm99QsProg');
+    if (el && this._sm99Rt.tab === 'pl') {
+      el.innerHTML = dead
+        ? `✅ 校验完成：「${this.esc(plName || '')}」${list.length} 首中 ${dead} 首音源已失效（已标 ✕ · 播放自动跳过）`
+        : `✅ 校验完成：「${this.esc(plName || '')}」${list.length} 首全部可播 🎉`;
+      setTimeout(() => { if (el) el.style.display = 'none'; }, 6000);
     }
-    Object.values(node).forEach(v => this._qs99Tracks(v, out, seen));
+    if (this._sm99Rt.tab === 'pl') this._sm99TabBody('pl');
   },
-  _qs99Norm(x) { return String(x || '').toLowerCase().replace(/[\s'’·\-—_/\\()（）\[\]【】.。,，、!！?？:：;；"“”`~*]/g, ''); },
-  _qs99Pick(arr, t) {
-    const tn = this._qs99Norm(t.n);
-    let best = null, bs = 0;
-    for (const it of (arr || [])) {
-      if (!it || !it.id || !it.name) continue;
-      const n2 = this._qs99Norm(it.name);
-      let sc = 0;
-      if (n2 === tn) sc = 1;
-      else if (n2.length > 2 && tn.length > 2 && (n2.includes(tn) || tn.includes(n2))) sc = .75;
-      if (!sc) continue;
-      const a2 = this._qs99Norm(Array.isArray(it.artist) ? it.artist.join('') : it.artist);
-      const ta = this._qs99Norm(t.a);
-      if (ta && a2) {
-        if (a2.includes(ta) || ta.includes(a2)) sc += .15;
-        else sc -= .3;
-      }
-      if (sc > bs) { bs = sc; best = it; }
-    }
-    return bs >= .6 ? best : null;
-  },
+
+  // ==================== 汽水音乐歌单导入（v12.9.71 重做 · 修复无法导入）====================
+  // 旧版走公共 CORS 代理链拉分享页——实测三代理全灭（allorigins 500 / codetabs 522 / corsproxy 401），
+  // 这是「汽水歌单链接无法导入」的根因。v12.9.71 通道：安卓端 Sm99Http 原生桥（iOS UA · 无 CORS）
+  // 优先，网页版降级代理链。解析 _ROUTER_DATA.playlist_page.medias 取曲目清单（含 track_id，
+  // 可直接拉单曲分享页拿可播直链——实测 encrypt:false 时 douyinvod 直链 206 audio/mp4 可播）。
+  //   曲目入库 p:'qishui' 原汁原味（歌名/歌手/专辑不丢）→ 播放时直链解析失败自动跨平台匹配兜底；
+  //   导入后后台逐曲校验音源，失效标 ✕（不阻塞 · 可离开本页）。
   async _sm99ImportQishui(raw) {
     const mm = String(raw || '').match(/https?:\/\/[^\s"'，。”]+/);
     const link = mm ? mm[0] : String(raw || '').trim();
-    const say = (x) => { const el = document.getElementById('sm99QsProg'); if (el) { el.style.display = 'block'; el.innerHTML = x; } else this._flash(x); };
-    say('⏳ 正在拉取汽水分享页…');
-    let html = '';
-    for (const px of this.SM99_QS_PROXIES) {
-      try {
-        const ctrl = new AbortController();
-        const to = setTimeout(() => { try { ctrl.abort(); } catch (e) {} }, 15000);
-        const res = await fetch(px(link), { signal: ctrl.signal });
-        clearTimeout(to);
-        if (res.ok) { const t2 = await res.text(); if (t2 && t2.length > 800) { html = t2; break; } }
-      } catch (e) {}
+    const say = (x) => this._sm99ImpSay(x);
+    say('⏳ 正在拉取汽水分享页（安卓原生通道优先）…');
+    const html = await this._sm99HttpGet(link);
+    if (!html) { say('⚠️ 汽水分享页拉取失败（链接失效或网络不通）——安卓客户端内导入最稳，网页版受跨域代理可用性影响'); return; }
+    const data = this._qs99Router(html);
+    const ld = data && data.loaderData;
+    // 单曲分享 → 转为单曲“歌单”导入
+    const tp = ld && ld.track_page;
+    if (tp && tp.track_id) {
+      const aw = tp.audioWithLyricsOption || {};
+      const nm = (aw.trackName ? '单曲 ' + aw.trackName : '汽水单曲').slice(0, 30);
+      const song = { s: 'r', p: 'qishui', id: String(tp.track_id), n: aw.trackName || '未知曲目', a: aw.artistName || '未知歌手', al: (aw.trackInfo && aw.trackInfo.album && aw.trackInfo.album.name) || '', u: '' };
+      song.u = this._sm99Uid(song);
+      const d = this._sm99Data();
+      const rt = this._sm99RtInit();
+      d.playlists.push({ id: 'p' + Date.now(), name: nm, created: Date.now(), songs: [song] });
+      rt.plId = d.playlists[d.playlists.length - 1].id;
+      this._sm99Save(d);
+      const inp = document.getElementById('sm99Link');
+      if (inp) inp.value = '';
+      this._sm99TabBody('pl');
+      say('🎉 汽水单曲导入成功：《' + this.esc(song.n) + '》');
+      return;
     }
-    if (!html) { say('⚠️ 汽水分享页拉取失败（跨域代理不可达或链接失效）——换个网络稍后再试'); return; }
-    const tracks = [];
-    this._qs99Tracks(this._qs99Router(html), tracks, {});
-    if (!tracks.length) { say('⚠️ 分享页解析不到曲目（可能是私密歌单或新版页面结构）'); return; }
-    const cap = Math.min(tracks.length, 60);
-    say(`📄 解析到 ${tracks.length} 首 · 开始跨平台匹配（约需 ${Math.ceil(cap * 1.2)} 秒，请勿离开本页）…`);
+    // 歌单分享 → 整单导入
+    const pp = ld && ld.playlist_page;
+    if (!pp || !Array.isArray(pp.medias)) { say('⚠️ 分享页解析不到曲目（可能是私密歌单或链接已过期）'); return; }
     const songs = [];
-    for (let i = 0; i < cap; i++) {
-      const t = tracks[i];
-      say(`🧩 匹配中 ${i + 1}/${cap} · 已匹配 ${songs.length} 首 · 《${this.esc(t.n.slice(0, 14))}》`);
-      for (const src of ['netease', 'tencent']) {
-        try {
-          const j = await this._sm99Api(this.SM99_API + '?types=search&source=' + src + '&name=' + encodeURIComponent(t.n + ' ' + t.a.split(' / ')[0]) + '&count=6');
-          const pick = this._qs99Pick(Array.isArray(j) ? j : [], t);
-          if (pick) { songs.push({ s: 'r', p: src, id: String(pick.id), n: t.n, a: t.a, al: t.al || '', u: '' }); break; }
-        } catch (e) {}
-      }
-    }
-    if (!songs.length) { say('⚠️ 一首都没匹配上——汽水歌单多为独家/翻唱曲目，试试手动搜索添加'); return; }
-    songs.forEach(s => { s.u = this._sm99Uid(s); });
+    (pp.medias || []).forEach(m => {
+      try {
+        const t = m && m.entity && m.entity.track;
+        if (!t || !t.id || !t.name) return;
+        const arts = Array.isArray(t.artists) ? t.artists.map(x => (x && x.name) || '').filter(Boolean).join(' / ') : '';
+        const s = { s: 'r', p: 'qishui', id: String(t.id), n: String(t.name), a: arts || '未知歌手', al: (t.album && t.album.name) || '', u: '' };
+        s.u = this._sm99Uid(s);
+        songs.push(s);
+      } catch (e) {}
+    });
+    if (!songs.length) { say('⚠️ 歌单是空的或解析不到曲目'); return; }
     const d = this._sm99Data();
     const rt = this._sm99RtInit();
-    const nm = '汽水歌单 ' + (Store.today() || '').slice(5).replace('-', '/');
+    const nm = ((pp.playlistInfo && pp.playlistInfo.title) || '汽水歌单 ' + (Store.today() || '').slice(5).replace('-', '/')).slice(0, 30);
     d.playlists.push({ id: 'p' + Date.now(), name: nm, created: Date.now(), songs });
     rt.plId = d.playlists[d.playlists.length - 1].id;
     this._sm99Save(d);
     const inp = document.getElementById('sm99Link');
     if (inp) inp.value = '';
-    this._sm99TabBody('pl');                                     // 重渲染后进度元素会重建，再写最终结果
-    say(`🎉 汽水导入完成：「${nm}」可播放 ${songs.length}/${tracks.length} 首${songs.length < tracks.length ? `（${tracks.length - songs.length} 首独家曲无平台音源）` : ''}`);
+    this._sm99TabBody('pl');
+    say(`🎉 汽水歌单导入成功：「${this.esc(nm)}」共 ${songs.length} 首 · 正在后台校验音源（直链不可用的曲目播放时会自动跨平台匹配）…`);
+    this._sm99VerifyBatch(songs, nm);
+  },
+
+  // ==================== 漫游模式（v12.9.71 · 上下滑动刷随机歌曲 · 五平台曲源池）====================
+  // 交互不变式：上滑 = 换一首 · 下滑 = 回上一首 · 点卡片即播（进既有播放器，可视化引擎不动）
+  // 曲源池：GD 四平台随机关键词随机页搜索 + 汽水曲目混池（来自已导入汽水歌单 · 去重 · ~25% 权重）
+  SM99_ROAM_KW: ['治愈', '晚安', '散步', '雨天', '清晨', '旅行', '民谣', '钢琴曲', '睡前', '运动', '摇滚', '说唱', '古风', '电子', '爵士', '怀旧金曲', '电影原声', '咖啡馆', '学习', '放松', '夏天', '冬天', '心动', '浪漫', '孤独', '勇气', '海洋', '星空', '粤语', '华语经典', '轻音乐'],
+  _sm99RoamSt() {
+    const rt = this._sm99RtInit();
+    if (!rt.roam) rt.roam = { queue: [], i: -1, loading: false };
+    return rt.roam;
+  },
+  async _sm99RoamMore() {
+    const r = this._sm99RoamSt();
+    if (r.loading) return;
+    if (!navigator.onLine) { this._sm99RoamPaint('⚠️ 当前离线——联网后开始漫游'); return; }
+    r.loading = true;
+    try {
+      // —— 汽水池：本地已导入的汽水曲目（跨歌单按 id 去重）——
+      let qsPool = [];
+      try {
+        const seen = {};
+        this._sm99Data().playlists.forEach(p => (p.songs || []).forEach(s => {
+          if (s && s.p === 'qishui' && s.id && !seen[s.id]) { seen[s.id] = 1; qsPool.push(s); }
+        }));
+      } catch (e) {}
+      if (qsPool.length >= 3 && Math.random() < 0.25) {            // 汽水曲目入池（约 1/4 概率成批混入）
+        for (let i = qsPool.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); const t = qsPool[i]; qsPool[i] = qsPool[j]; qsPool[j] = t; }
+        r.queue.push(...qsPool.slice(0, 6));
+      } else {                                                     // GD 四平台：随机关键词 + 随机页
+        const GD = ['netease', 'tencent', 'kugou', 'kuwo'];
+        const src = GD[Math.floor(Math.random() * GD.length)];
+        const kw = this.SM99_ROAM_KW[Math.floor(Math.random() * this.SM99_ROAM_KW.length)];
+        const j = await this._sm99Api(this.SM99_API + '?types=search&source=' + src + '&name=' + encodeURIComponent(kw) + '&count=12&pages=' + (1 + Math.floor(Math.random() * 3)));
+        if (Array.isArray(j)) {
+          const songs = j.filter(x => x && x.id && x.name)
+            .map(x => ({ s: 'r', p: src, id: String(x.id), n: String(x.name), a: (Array.isArray(x.artist) ? x.artist : [x.artist]).filter(Boolean).join(' / ') || '未知歌手', al: x.album || '', u: '' }));
+          songs.forEach(s => { s.u = this._sm99Uid(s); });
+          for (let i = songs.length - 1; i > 0; i--) { const k2 = Math.floor(Math.random() * (i + 1)); const t = songs[i]; songs[i] = songs[k2]; songs[k2] = t; }
+          r.queue.push(...songs);
+        }
+      }
+    } catch (e) {}
+    r.loading = false;
+    if (r.i < 0 && r.queue.length) r.i = 0;                        // 首卡就位
+    if (r.queue.length && r.i >= r.queue.length) r.i = r.queue.length - 1;   // 池尽续拉后归位
+    this._sm99RoamPaint();
+  },
+  _sm99RoamPaint(msg) {
+    const box = document.getElementById('sm99RoamCard');
+    const rt = this._sm99Rt;
+    if (!box || !rt || rt.tab !== 'roam') return;
+    if (msg) { box.innerHTML = '<div class="sm99-roam-loading">' + msg + '</div>'; return; }
+    const r = rt.roam;
+    const s = r && r.i >= 0 && r.queue[r.i];
+    if (!s) { box.innerHTML = '<div class="sm99-roam-loading">🌙 正在为你打捞随机歌曲…</div>'; return; }
+    const pdef = this.SM99_SRC.find(x => x.k === s.p) || {};
+    box.innerHTML = `
+      <img class="sm99-roam-cover" src="${this._sm99Cover(s.u)}" alt="">
+      <div class="sm99-roam-name">${this.esc(s.n)}${rt.dead[s.u] ? ' <span class="sm99-dead-tag">✕ 失效</span>' : ''}</div>
+      <div class="sm99-roam-artist">${this.esc(s.a || '')}${s.al ? ' · ' + this.esc(String(s.al).slice(0, 20)) : ''}</div>
+      <div class="sm99-roam-plat" style="background:${pdef.dot || '#94a3b8'}">${pdef.n || s.p}${s.p === 'qishui' ? ' 🥤' : ''}</div>`;
+  },
+  _sm99RoamNext(dir) {
+    const r = this._sm99RoamSt();
+    if (dir > 0) {
+      if (r.i < r.queue.length - 1) r.i++;
+      else {
+        if (r.loading) { this._flash('⏳ 正在打捞下一批歌曲…'); return; }
+        r.i = r.queue.length;                                       // 越界占位 → More 拉完归位刷卡
+        this._sm99RoamMore();
+        this._sm99RoamPaint();
+        return;
+      }
+    } else {
+      if (r.i > 0) r.i--;
+      else { this._flash('已经是第一张漫游卡片啦'); return; }
+    }
+    this._sm99RoamPaint();
+    try { this._sfx99('tap'); } catch (e) {}
+    if (r.queue.length - r.i < 3) this._sm99RoamMore();             // 后台补池（不打断浏览）
+  },
+  _sm99RoamPlay() {
+    const r = this._sm99RoamSt();
+    const s = r.i >= 0 && r.queue[r.i];
+    if (!s) { this._flash('⏳ 池子还在装歌，稍等一下'); return; }
+    this._sm99PlaySong(s, r.queue, r.i);                            // 漫游队列即播放上下文：下一首继续漫游
+  },
+  _sm99RoamWire() {
+    const box = document.getElementById('sm99RoamBox');
+    if (!box || box.dataset.sm99Wired) return;
+    box.dataset.sm99Wired = '1';
+    let on = false, sy = 0, dy = 0;
+    box.addEventListener('pointerdown', (e) => { on = true; sy = e.clientY; dy = 0; });
+    box.addEventListener('pointermove', (e) => {
+      if (!on) return;
+      dy = e.clientY - sy;
+      const card = box.querySelector('.sm99-roam-card');
+      if (card) card.style.transform = 'translateY(' + Math.max(-90, Math.min(90, dy * .45)) + 'px)';
+    });
+    const end = () => {
+      if (!on) return;
+      on = false;
+      const card = box.querySelector('.sm99-roam-card');
+      if (card) card.style.transform = '';
+      if (dy <= -48) this._sm99RoamNext(1);                          // 上滑 → 换一首
+      else if (dy >= 48) this._sm99RoamNext(-1);                     // 下滑 → 回上一首
+      else if (Math.abs(dy) < 12) this._sm99RoamPlay();              // 原地点卡片 → 播放
+    };
+    box.addEventListener('pointerup', end);
+    box.addEventListener('pointercancel', end);
+    box.addEventListener('pointerleave', end);
   },
 
   // ==================== 本地文件导入（IndexedDB 落盘）====================
@@ -869,7 +1101,7 @@ Object.assign(App, {
           <div class="sm99-title">🎧 独行音乐</div>
           <div class="sm99-src-badge" title="开源聚合接口 · 已验证直连">聚合 · ${this.SM99_SRC.length} 平台</div>
         </div>
-        <div class="sm99-sub">长按底部【🏠 首页】旋钮 1 秒可回到这里 · 网易云 / QQ音乐 / 酷狗 / 酷我聚合搜索</div>
+        <div class="sm99-sub">长按底部【🏠 首页】旋钮 1 秒可回到这里 · 五大平台聚合：网易云 / QQ音乐 / 酷狗 / 酷我 / 汽水音乐</div>
 
         <div id="sm99Np"></div>
 
@@ -887,8 +1119,9 @@ Object.assign(App, {
         </div>
 
         <div class="sm99-tabs">
-          <button class="sm99-tab on" data-tab="search" onclick="App._sm99Tab('search')">🔍 搜索</button>
+          <button class="sm99-tab" data-tab="search" onclick="App._sm99Tab('search')">🔍 搜索</button>
           <button class="sm99-tab" data-tab="pl" onclick="App._sm99Tab('pl')">📃 歌单</button>
+          <button class="sm99-tab" data-tab="roam" onclick="App._sm99Tab('roam')">🌌 漫游</button>
           <button class="sm99-tab" data-tab="lib" onclick="App._sm99Tab('lib')">🎲 曲库</button>
           <button class="sm99-tab" data-tab="lrc" onclick="App._sm99Tab('lrc')">📝 歌词</button>
           <button class="sm99-tab" data-tab="tune" onclick="App._sm99Tab('tune')">🎛️ 调音</button>
@@ -1042,6 +1275,21 @@ Object.assign(App, {
           <button class="btn btn-ghost btn-sm" onclick="App._sm99PickFiles()">📁 选择音乐文件</button>
           <input type="file" id="sm99File" accept="audio/*,.mp3,.wav,.flac,.m4a,.ogg,.aac,.opus" multiple style="display:none" onchange="App._sm99FileInput(this)">
         </div>`;
+    }
+    else if (tab === 'roam') {
+      body.innerHTML = `
+        <div class="sm99-lib-note">🌌 漫游模式 —— 上下滑动刷随机歌曲卡片 · 点卡片即播 · 曲源池五大平台混搭（网易云 / QQ / 酷狗 / 酷我随机关键词 + 已导入的汽水歌单曲目混池）</div>
+        <div class="sm99-roam" id="sm99RoamBox">
+          <div class="sm99-roam-card" id="sm99RoamCard"><div class="sm99-roam-loading">🌙 正在为你打捞随机歌曲…</div></div>
+          <div class="sm99-roam-hint">↑ 上滑换一首 · 下滑回上一首 · 点卡片播放 ↓</div>
+        </div>
+        <div class="sm99-roam-ops">
+          <button class="sm99-mini-btn" onclick="App._sm99RoamNext(-1)">↑ 上一首</button>
+          <button class="sm99-mini-btn" onclick="App._sm99RoamPlay()">▶ 播放这首</button>
+          <button class="sm99-mini-btn" onclick="App._sm99RoamNext(1)">↓ 换一首</button>
+        </div>`;
+      this._sm99RoamMore();
+      this._sm99RoamWire();
     }
     else if (tab === 'lib') {
       const TAGS = ['全部', '8bit芯片', 'Lo-Fi', '进行曲', '欢快', '平静', '梦幻', '紧张', '专注', '史诗', '自然', '战斗', '学习', '胜利', '出发'];

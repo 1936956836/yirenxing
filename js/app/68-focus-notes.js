@@ -15,12 +15,12 @@ Object.assign(App, {
         <div style="padding:14px 12px;border:1px solid #d1fae5;border-radius:12px;background:linear-gradient(135deg,#ecfdf5,#d1fae5);cursor:pointer" onclick="App.focus99Setup('meditate')">
           <div style="font-size:30px">🧘</div>
           <div style="font-weight:800;font-size:14px;margin-top:6px;color:#047857">冥想</div>
-          <div style="font-size:12px;color:#475569;line-height:1.6;margin-top:4px">正计时 · 分心觉察<br>雨天白噪音 🌧️<br>可随时退出</div>
+          <div style="font-size:12px;color:#475569;line-height:1.6;margin-top:4px">正计时 · 分心觉察<br>环境音效自选 🎧<br>可随时退出</div>
         </div>
         <div style="padding:14px 12px;border:1px solid #fee2e2;border-radius:12px;background:linear-gradient(135deg,#fef2f2,#fff7ed);cursor:pointer" onclick="App.focus99Setup('pomodoro')">
           <div style="font-size:30px">🍅</div>
           <div style="font-weight:800;font-size:14px;margin-top:6px;color:#b91c1c">番茄钟</div>
-          <div style="font-size:12px;color:#475569;line-height:1.6;margin-top:4px">倒计时 · 全程锁定<br>篝火山风 🔥<br>开始前请谨慎</div>
+          <div style="font-size:12px;color:#475569;line-height:1.6;margin-top:4px">倒计时 · 全程锁定<br>环境音效自选 🎧<br>开始前请谨慎</div>
         </div>
         <div style="grid-column:1 / -1;padding:14px 12px;border:1px solid #fde68a;border-radius:12px;background:linear-gradient(135deg,#fffbeb,#fef3c7);cursor:pointer" onclick="App.mode99EnterJushen()">
           <div style="display:flex;align-items:center;gap:12px">
@@ -31,6 +31,14 @@ Object.assign(App, {
             </div>
           </div>
         </div>
+      </div>
+      <div style="margin-top:12px;padding:11px 12px;border:1px solid #bae6fd;border-radius:12px;background:linear-gradient(135deg,#f0f9ff,#e0f2fe)">
+        <div style="display:flex;align-items:center;justify-content:space-between">
+          <div style="font-size:12.5px;font-weight:800;color:#075985">🎧 环境音效（howler.js · 可叠加）</div>
+          <button type="button" class="btn btn-ghost btn-sm" style="margin:0" onclick="App.amb99Panel()">音效台</button>
+        </div>
+        <div class="amb99-quick">${this._amb99QuickChips()}</div>
+        <div style="font-size:10.5px;color:#64748b;margin-top:6px;line-height:1.6">下雨 / 海浪 / 森林 / 咖啡馆 / 晚风 · 多选叠加 · 点「音效台」调各音量——开始专注后自动播放，结束自动停</div>
       </div>`);
   },
   // 时长输入
@@ -86,15 +94,18 @@ Object.assign(App, {
     if (ov) ov.remove();
     this._flash('已退出，专注未开始');
   },
-  // —— 冥想主流程：正计时 + 分心检测（可随时退出）；v12.1 波纹动画 + 白噪音自动播放 ——
+  // —— 冥想主流程：正计时 + 分心检测（可随时退出）；v12.9.58 环境音效走 howler.js（110-howler99.js）——
   focus99Run(mode, durMs) {
     const isMed = mode === 'meditate';
     const startTs = Date.now();
     const ov = document.createElement('div');
     ov.id = 'focus99Run';
     ov.style.cssText = 'position:fixed;inset:0;background:linear-gradient(180deg,#0f172a,#1e293b);z-index:2147483647;display:flex;align-items:center;justify-content:center;flex-direction:column;';
-    // v12.1 白噪音：冥想=雨天（雨声+鸟啼）· 番茄=篝火+山风（Web Audio 全合成；不支持的浏览器静默跳过）
-    const wnOK = !!(this._wn99Start && this._wn99Start(isMed ? 'rain' : 'fire'));
+    // v12.9.58 环境音效（howler.js 多轨叠加 · 原生兜底）：按选择弹窗里挑好的音效起播；没选则雨声
+    const ambKeys = Object.keys(this._amb99State || {}).filter(k => this._amb99State[k] && this._amb99State[k].on);
+    if (!ambKeys.length) { this._amb99State.rain = { on: true, vol: 0.7 }; ambKeys.push('rain'); }
+    ambKeys.forEach(k => this._amb99Play(k));
+    const ambTxt = this._amb99DEFS()[ambKeys[0]] ? this._amb99DEFS()[ambKeys[0]].ico + ' ' + this._amb99DEFS()[ambKeys[0]].n : '🎧';
     ov.innerHTML = `
       <div class="fc99-ripple-wrap${isMed ? ' med' : ' pomo'}">
         <div class="fc99-ripple"><i></i><i></i><i></i></div>
@@ -103,9 +114,7 @@ Object.assign(App, {
       <div id="fc99Clock" style="font-size:64px;font-weight:900;color:#fff;margin-top:30px;font-variant-numeric:tabular-nums">00:00</div>
       <div id="fc99Left" style="color:#64748b;font-size:13px;margin-top:6px">${isMed ? `目标 ${Math.round(durMs/60000)} 分钟` : `剩余 ${Math.round(durMs/60000)} 分钟`}</div>
       <div id="fc99Dist" style="color:#94a3b8;font-size:12px;margin-top:14px;height:16px"></div>
-      ${wnOK
-        ? '<button id="fc99Snd" class="fc99-snd on" onclick="App.wn99Toggle(this)">🔊 白噪音开着</button>'
-        : '<div class="fc99-snd off">🎧 此浏览器不支持白噪音合成（专注不受影响）</div>'}
+      <button id="fc99Snd" class="fc99-snd on" onclick="App._amb99RunToggle(this)">🔊 ${this.esc(ambTxt)}</button>
       ${isMed
         ? '<button class="btn btn-ghost" style="margin-top:18px;background:rgba(255,255,255,.08);color:#cbd5e1;border-color:rgba(255,255,255,.25)" onclick="App.focus99Quit()">退出冥想</button>'
         : '<div style="margin-top:18px;color:#475569;font-size:12px">🔒 番茄时刻锁定中 · 结束后自动解锁</div>'}`;
@@ -152,7 +161,7 @@ Object.assign(App, {
   focus99Quit() {
     if (!this._fc99State) return;
     if (this._fc99Timer) { clearInterval(this._fc99Timer); this._fc99Timer = null; }
-    if (this._wn99Stop) this._wn99Stop(); // v12.1 白噪音随退出淡出
+    if (this._amb99StopAll) this._amb99StopAll(); // v12.9.58 环境音效随退出停止（howler + 原生全释放）
     const { mode, startTs, durMs } = this._fc99State;
     const doneMs = Date.now() - startTs;
     const ov = document.getElementById('focus99Run');
@@ -173,7 +182,7 @@ Object.assign(App, {
     const ov = document.getElementById('focus99Run');
     if (ov) ov.remove();
     document.body.style.overflow = '';
-    if (this._wn99Stop) this._wn99Stop(); // v12.1 白噪音随完成淡出
+    if (this._amb99StopAll) this._amb99StopAll(); // v12.9.58 环境音效随完成停止
     const min = Math.round(durMs / 60000);
     this._fc99State = null;
     Store.focus99Log(mode, min, !!distracted);
@@ -192,6 +201,31 @@ Object.assign(App, {
   },
   _rerenderIfHabit() {
     try { if (App.currentView === 'workbench' && App._wbView === 'habit') App.render_workbench(); } catch(_) {}
+  },
+
+  // ==================== v12.9.58 环境音效 · 选择弹窗快选 chips + 专注运行页开关 ====================
+  _amb99QuickChips() {
+    const defs = this._amb99DEFS();
+    return Object.keys(defs).map(k => {
+      const st = this._amb99State[k] || { on: false, vol: 0.7 };
+      return `<button type="button" class="amb99-chip${st.on ? ' on' : ''}" onclick="App._amb99QuickToggle('${k}')">${defs[k].ico} ${defs[k].n}</button>`;
+    }).join('');
+  },
+  _amb99QuickToggle(k) {
+    const st = (this._amb99State[k] = this._amb99State[k] || { on: false, vol: 0.7 });
+    st.on = !st.on;          // 选择弹窗只标记（不试播）——开始专注时统一播放
+    const box = document.querySelector('.amb99-quick');
+    if (box) box.innerHTML = this._amb99QuickChips();
+  },
+  // 专注运行页音效开关（overlay 内按钮 · howler/原生统一开关）
+  _amb99RunToggle(btn) {
+    if (this._amb99AnyOn()) {
+      this._amb99StopAll();
+      if (btn) { btn.classList.remove('on'); btn.textContent = '🔇 环境音已关'; }
+    } else {
+      Object.keys(this._amb99State).forEach(k => this._amb99State[k].on && this._amb99Play(k));
+      if (btn) { btn.classList.add('on'); btn.textContent = '🔊 环境音开着'; }
+    }
   },
 
   // ==================== 【挑战中心】（v12.9.46 重做：红绿白渐变底 · 双卡不对称 · 只留月度魔物+原生挑战）====================

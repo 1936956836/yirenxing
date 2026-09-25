@@ -84,6 +84,14 @@ const Store = {
       // practices: [{id,date,ts,practice,subject,total,correct,note}] 练习记录 上限 500
       // 学习会话不在 study99——直接复用 sport99.studies（聚神·学习结束写入），一处数据两处可用
       study99: { points: [], practices: [] },
+      // ===== v12.9.50 个人用药清单 meds99（非授权账号自定义 · 随云账号同步隔离）=====
+      // list: [{id, name, dose, time, perDay, icon, custom:true}] 自填药物（默认空——吃什么药自己填）
+      // checkinOn: bool 「吃药」习惯打卡手动开启（默认关，不开启不生效）
+      meds99: { list: [], checkinOn: false },
+      // ===== v12.9.50 经期数据 period99（女生专属 · 档案性别=女 才解锁 · 随云账号同步隔离）=====
+      // logs: [{date:'YYYY-MM-DD', flow:'无|少|中|多', pain:'无|轻微|中度|重度', symptoms:[], moods:[], note}] 上限 800 条
+      // settings: { cycleLen: 28, periodLen: 5 } 无历史数据时的预测基准
+      period99: { logs: [], settings: { cycleLen: 28, periodLen: 5 } },
     };
   },
 
@@ -137,6 +145,20 @@ const Store = {
       }
       // v3.5：任务宝箱字段（w.chests）已随旧货币体系移除，不再迁移
       if ('chests' in w) try { delete w.chests; } catch(_) {}
+    }
+    // v12.9.50 个人用药清单 meds99：自填药物 + 「吃药」打卡开关（非授权账号专用）
+    if (!out.meds99 || typeof out.meds99 !== 'object' || Array.isArray(out.meds99)) out.meds99 = e.meds99;
+    else {
+      if (!Array.isArray(out.meds99.list)) out.meds99.list = [];
+      if (typeof out.meds99.checkinOn !== 'boolean') out.meds99.checkinOn = false;
+    }
+    // v12.9.50 经期数据 period99（女生专属）：日志 + 预测基准设置
+    if (!out.period99 || typeof out.period99 !== 'object' || Array.isArray(out.period99)) out.period99 = e.period99;
+    else {
+      if (!Array.isArray(out.period99.logs)) out.period99.logs = [];
+      if (!out.period99.settings || typeof out.period99.settings !== 'object') out.period99.settings = { cycleLen: 28, periodLen: 5 };
+      const c = parseInt(out.period99.settings.cycleLen, 10); if (!(c >= 18 && c <= 45)) out.period99.settings.cycleLen = 28;
+      const l = parseInt(out.period99.settings.periodLen, 10); if (!(l >= 2 && l <= 10)) out.period99.settings.periodLen = 5;
     }
     return out;
   },
@@ -676,6 +698,9 @@ const Store = {
     }
     if (patch.height !== undefined) { const h = parseFloat(patch.height); d.profile.height = isFinite(h) ? Math.max(0, h) : 0; }
     if (patch.weight !== undefined) { const w = parseFloat(patch.weight); d.profile.weight = isFinite(w) ? Math.max(0, w) : 0; }
+    // v12.9.50 性别持久化修复：saveProfileFromForm 一直有传 gender，但此处从未写入——
+    //   导致「改为女生后仍显示男生」（形象/首页头像/像素战士全部跟随档案性别）。现补上落盘。
+    if (patch.gender !== undefined) d.profile.gender = (patch.gender === '女') ? '女' : '男';
     if (typeof patch.major === 'string') d.profile.major = patch.major.trim().slice(0, 20); // v12.9.3 所学专业 → 练习站专业课题库
     // 自动推算生肖 + 星座
     if (d.profile.birthDate && /^\d{4}-\d{2}-\d{2}$/.test(d.profile.birthDate)) {
@@ -2574,9 +2599,13 @@ const Store = {
   // —— 【管家阿福 · AI 聊天】配置存 settings；消息记录独立存储（防撑爆主存档）——
   // settings: afu_ai_enabled（总开关）/ afu_ai_mode（direct|worker）/ afu_worker_url / afu_api_base / afu_api_key / afu_api_model
   //   以及 afu_key_deepseek / afu_key_zhipu（v11.7.2 每模型独立 Key 槽位，切换模型自动带各自的 Key）
-  // v12.9.47 开源仓库版：不内置任何出厂密钥（公开仓库 = 前端代码人人可读，内置即泄露）。
-  //   首次使用 AI 功能时，App 会引导到 ⚙️ 设置里填入你自己的 Key（DeepSeek / 智谱 / 任意
-  //   OpenAI 兼容接口），仅存本机 localStorage。私人部署想「开箱即用」可自行把 Key 填回下方。
+  // v11.7.2 内置出厂密钥（用户本人提供的自有密钥，应本人要求内置实现「部署即用」）：
+  //   ⚠️⚠️⚠️ 仅适用于【私人部署】：任何拿到部署网址/单文件 HTML 的人都能从前端代码提取这两个密钥！
+  //   ⚠️ 切勿公开分享部署地址或单文件版；若已泄露，立即去对应平台吊销并更换新 Key 后改这里。
+  // v13.3.29 本仓库是【公开镜像】——内置出厂密钥已在此清空：
+  //   ① 公开仓库的推送保护（secret scanning）会直接拒绝含密钥的提交（实测拦截）；
+  //   ② 本仓库只承载 apk/ 与更新清单，镜像网页上的阿福请在 App 内「设置」自填 Key。
+  //   主仓库（源码/构建产物）不受影响，仍按上面的原规则使用内置出厂密钥。
   AFU99_BAKED_KEYS: {
     deepseek: '',
     zhipu: '',

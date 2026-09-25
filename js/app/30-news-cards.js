@@ -129,47 +129,15 @@ Object.assign(App, {
     try { localStorage.setItem('kc_offset', JSON.stringify(this.kcOffset)); } catch(e){}
     this.render_learning();
   },
-  // 朗读英语单词（浏览器 SpeechSynthesis，无需联网）
-  // 注意：必须在用户手势事件（click）中直接调用以绕过自动播放策略
-  speakWord(word) {
-    try {
-      if (!word) return;
-      if (!('speechSynthesis' in window) || typeof SpeechSynthesisUtterance === 'undefined') {
-        alert('当前浏览器不支持语音朗读功能，请尝试最新版 Chrome/Edge/Safari');
-        return;
-      }
-      // 1) 取消之前的语音（部分浏览器若先cancel后speak会出现静默，所以加微延迟兜底）
-      try { window.speechSynthesis.cancel(); } catch(e){}
-      // 2) 预加载 voices（部分浏览器 voices 异步加载）
-      let voices = [];
-      try { voices = window.speechSynthesis.getVoices() || []; } catch(e){ voices = []; }
-      const u = new SpeechSynthesisUtterance(String(word));
-      u.lang = 'en-US';
-      u.rate = 0.85;
-      u.pitch = 1;
-      u.volume = 1;
-      // 优先选择英语发音
-      const pick = (list, cond) => list.find(cond);
-      const enVoice = pick(voices, v => /en[-_]US/i.test(v.lang)) || pick(voices, v => /^en/i.test(v.lang)) || null;
-      if (enVoice) u.voice = enVoice;
-      u.onerror = (e) => { /* 静默失败，避免阻塞UI */ };
-      // 3) 用户手势内立即触发 speak（关键：不能放到异步里再 speak，浏览器视为非用户手势）
-      window.speechSynthesis.speak(u);
-      // 4) 兜底：若仍未发音，100ms 后再次触发 speak（某些移动浏览器首次会吞掉 speak）
-      setTimeout(() => {
-        try {
-          if (window.speechSynthesis.paused || (!window.speechSynthesis.speaking && !window.speechSynthesis.pending)) {
-            const u2 = new SpeechSynthesisUtterance(String(word));
-            u2.lang = 'en-US'; u2.rate = 0.85;
-            if (enVoice) u2.voice = enVoice;
-            window.speechSynthesis.cancel();
-            window.speechSynthesis.speak(u2);
-          }
-        } catch(e){}
-      }, 120);
-    } catch(e) {
-      try { alert('朗读失败：' + (e && e.message ? e.message : e)); } catch(_) {}
-    }
+  // v12.9.59 朗读英语单词（@capacitor-community/text-to-speech · 复用全局统一 TTS 实例）
+  // 网页 speechSynthesis 在安卓 WebView 不存在（旧版弹「当前浏览器不支持语音朗读」）——
+  //   真机一律走系统 TTS 引擎（95-native99.js 统一封装，朗读失败友好提示，不弹插件报错）。
+  async speakWord(word) {
+    if (!word) return;
+    await this._tts99Speak(String(word), {
+      lang: 'en-US', rate: 0.85, pitch: 1.0,
+      hint: '🔊 单词朗读走手机系统人声——请在一人行手机客户端使用',
+    });
   },
 
 });

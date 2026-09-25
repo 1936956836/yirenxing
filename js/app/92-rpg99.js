@@ -703,10 +703,15 @@ Object.assign(App, {
         this._flash('阿福觉得回答太简短啦——再具体一点点');
       }
     } else {
-      this._flash('🤵 阿福觉得这个回答还不足以证明任务完成——认真做完再来检验吧');
+      this._flash('🤵 阿福觉得回答还不够具体——补充一点细节（做了什么 / 多少 / 多久 / 感受）再提交一次就好');
     }
   },
   // LLM 判定：结合回答推断是否真的完成（与记录审核同一套 AI 通道）
+  // v12.9.50 修复「无论怎么填都过不了检验」：
+  //   ① AI 通道任何故障（Key 失效 / 配额耗尽 / Worker 5xx / 响应解析失败）一律信任降级（len-only），
+  //      绝不误判为不通过——此前 fetch 成功但返回错误时 reply 为空，会落到兜底 return 'no'，把所有回答判死；
+  //   ② 判定提示词放宽：默认通过，只有明显敷衍 / 完全无关 / 明显编造才不通过；
+  //   ③ 瞬时故障自动重试一次；JSON 解析容错（外围带文字 / markdown 围栏均可）。
   async _rpg99VerifyJudge(v, ans) {
     try {
       const st = this._afuAIState ? this._afuAIState() : { ok: false };
@@ -715,24 +720,35 @@ Object.assign(App, {
       const CATN = { grow: '成长（运动/学习）', quit: '戒（正心）', life: '生活' };
       const sys = '你是「一人行」App 的管家阿福，正在主持【阿福检验时刻】。用户长按了今日独行任务卡，声称完成了任务。'
         + '任务：「' + v.t + '」（要求：' + v.d + '）。类别：' + (CATN[v.cat] || '任务') + '。'
-        + '请根据用户的回答判断他是否真的完成了这个任务——回答要具体可信、与任务相关；含糊敷衍、明显编造或答非所问则不通过。'
+        + '判定原则（重要——默认通过，宽进）：只要回答与任务相关、且包含任何具体细节（做了什么 / 数量 / 时长 / 身体感受 / 当时场景），就判定通过；'
+        + '只有当回答明显敷衍（例如只回「做了」「好了」这类毫无细节的空话）、与任务完全无关、或明显编造时才不通过。'
+        + '回答简短但具体 = 通过；不要过度怀疑，宁可放过、不可冤枉。'
         + '只回复 JSON：{"ok":true} 或 {"ok":false}，不要有多余文字。';
       const isWorker = cfg.mode === 'worker';
       const headers = { 'Content-Type': 'application/json' };
       if (!isWorker) headers['Authorization'] = 'Bearer ' + cfg.key;
       const url = isWorker ? this._afuAIEndpoint(cfg) : cfg.base.replace(/\/+$/, '') + '/chat/completions';
-      const res = await fetch(url, {
-        method: 'POST', headers,
-        body: JSON.stringify({
-          model: isWorker ? 'glm-4-flash' : (cfg.model || 'deepseek-chat'),
-          messages: [{ role: 'system', content: sys }, { role: 'user', content: ans.slice(0, 600) }],
-          temperature: 0.1, max_tokens: 30,
-        }),
-      });
-      const j = await res.json().catch(() => ({}));
-      const reply = (j && j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content) || '';
-      try { const x = JSON.parse(reply.match(/\{[\s\S]*\}/)[0]); return x.ok ? 'ok' : 'no'; } catch (e) {}
-      return /true/i.test(reply) ? 'ok' : 'no';
+      let reply = '';
+      for (let t = 0; t < 2 && !reply; t++) { // 瞬时故障重试一次；仍无有效响应 → 信任降级
+        let res = null;
+        try {
+          res = await fetch(url, {
+            method: 'POST', headers,
+            body: JSON.stringify({
+              model: isWorker ? 'glm-4-flash' : (cfg.model || 'deepseek-chat'),
+              messages: [{ role: 'system', content: sys }, { role: 'user', content: ans.slice(0, 600) }],
+              temperature: 0.1, max_tokens: 60,
+            }),
+          });
+        } catch (e) { continue; } // 网络 / CORS 异常 → 再试一次
+        if (!res || !res.ok) continue; // HTTP 错误（Key 失效 / 配额 / Worker 5xx）→ 不判失败，走降级
+        const j = await res.json().catch(() => ({}));
+        reply = (j && j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content) || '';
+      }
+      if (!reply) return 'len-only'; // AI 无有效响应：按信任门槛（≥10 字）放行，绝不卡死用户
+      const om = reply.match(/"ok"\s*:\s*(true|false)/i); // 容错解析：JSON 外围带文字 / markdown 围栏均可
+      if (om) return om[1].toLowerCase() === 'true' ? 'ok' : 'no';
+      return /true/i.test(reply) ? 'ok' : 'len-only'; // 解析不出明确 false → 不冤枉用户
     } catch (e) { return 'len-only'; } // 网络/AI 异常：信任降级
   },
   // 划走动画：顶层卡飞出淡出 → 移到堆底 → 重渲染（下一张内容露出）
@@ -1370,6 +1386,48 @@ Object.assign(App, {
         .rpg99-shopbtn:active{transform:translate(1px,1px);box-shadow:1px 1px 0 rgba(127,29,29,.3)}
         .rpg99-shopbtn .si{font-size:20px}
         .rpg99-foot{text-align:center;font-size:9px;color:#b91c1c;letter-spacing:3px;margin-top:18px;opacity:.75}
+        /* v12.9.51 直达传送门（四魔封印 / 月度魔物）：像素风双门 */
+        .rpg99-portals{display:flex;gap:12px;margin:22px 18px 0}
+        .rpg99-portal{flex:1;position:relative;border:3px solid var(--rpg-line);background:linear-gradient(180deg,#fff,#fff1f2);
+          box-shadow:4px 4px 0 rgba(127,29,29,.3);cursor:pointer;padding:12px 10px 10px;text-align:center;
+          transition:transform .12s ease}
+        .rpg99-portal:active{transform:translate(1px,1px);box-shadow:2px 2px 0 rgba(127,29,29,.3)}
+        .rpg99-portal .p-ico{font-size:24px;line-height:1;display:block;filter:drop-shadow(0 2px 0 rgba(127,29,29,.25))}
+        .rpg99-portal .p-n{display:block;font-size:12px;font-weight:900;color:var(--rpg-line);margin-top:6px;letter-spacing:1px}
+        .rpg99-portal .p-d{display:block;font-size:8.5px;font-weight:700;color:#b91c1c;margin-top:3px;line-height:1.5}
+        .rpg99-portal.quit{background:linear-gradient(180deg,#312e81,#1e1b4b);border-color:#312e81}
+        .rpg99-portal.quit .p-n{color:#e0e7ff}.rpg99-portal.quit .p-d{color:#a5b4fc}
+        .rpg99-portal.quit .p-ico{filter:drop-shadow(0 0 8px rgba(129,140,248,.8))}
+        .rpg99-portal .p-go{position:absolute;top:-8px;right:-6px;font-size:8px;font-weight:900;color:#fff;background:var(--rpg-red);
+          border:2px solid #fff;padding:1px 6px;transform:rotate(4deg);letter-spacing:1px}
+        .rpg99-portal.quit .p-go{background:#4f46e5}
+        /* v12.9.51b 月度魔物门 · 压迫感重做：幽暗山谷深红黑 + 血月辉光 + 暗雾涌动 + 红电弧 */
+        .rpg99-portal.boss{position:relative;overflow:hidden;border-color:#7f1d1d;
+          background:linear-gradient(180deg,#0c0a10 0%,#2a0a0e 46%,#450a0a 78%,#5b0f0f 100%);
+          box-shadow:0 0 18px rgba(220,38,38,.45),inset 0 0 22px rgba(0,0,0,.85),4px 4px 0 rgba(69,10,10,.55)}
+        .rpg99-portal.boss::before{content:'';position:absolute;inset:0;pointer-events:none;
+          background:
+            radial-gradient(circle at 78% 16%,rgba(248,113,113,.28),transparent 30%),
+            radial-gradient(ellipse 130% 60% at 50% 118%,rgba(127,29,29,.5),transparent 62%),
+            repeating-linear-gradient(115deg,transparent 0 9px,rgba(255,255,255,.035) 9px 10px)}
+        .rpg99-portal.boss::after{content:'⚡';position:absolute;left:9px;top:7px;font-size:10px;color:#fecaca;
+          text-shadow:0 0 7px rgba(248,113,113,.95),0 0 14px rgba(239,68,68,.7);
+          animation:rpg99boltf 4.2s infinite}
+        @keyframes rpg99boltf{0%,84%,100%{opacity:0}86%{opacity:1}88%{opacity:.15}90%{opacity:.9}93%{opacity:0}}
+        .rpg99-portal.boss .p-ico{font-size:26px;filter:none;
+          text-shadow:0 0 10px rgba(239,68,68,.95),0 0 22px rgba(220,38,38,.75),0 2px 0 #450a0a}
+        .rpg99-portal.boss .p-n{color:#fecaca;text-shadow:0 0 8px rgba(248,113,113,.6),1px 1px 0 rgba(69,10,10,.9)}
+        .rpg99-portal.boss .p-d{color:#f87171}
+        .rpg99-portal.boss .p-emb{position:absolute;right:7px;bottom:6px;width:22px;height:22px;border-radius:50%;
+          background:radial-gradient(circle at 34% 30%,#fca5a5,#dc2626 62%,#7f1d1d);
+          box-shadow:0 0 12px rgba(239,68,68,.8),inset -3px -2px 0 rgba(69,10,10,.55);
+          animation:rpg99bloodmoon 3.4s ease-in-out infinite}
+        @keyframes rpg99bloodmoon{0%,100%{box-shadow:0 0 10px rgba(239,68,68,.65),inset -3px -2px 0 rgba(69,10,10,.55)}
+          50%{box-shadow:0 0 18px rgba(239,68,68,.95),inset -3px -2px 0 rgba(69,10,10,.55)}}
+        .rpg99-portal.boss .p-veil{position:absolute;left:0;right:0;bottom:0;height:34%;
+          background:repeating-linear-gradient(90deg,rgba(12,10,16,.0) 0 5px,rgba(12,10,16,.55) 5px 10px);
+          animation:rpg99mist 5s linear infinite;pointer-events:none}
+        @keyframes rpg99mist{from{background-position:0 0}to{background-position:40px 0}}
       </style>
       <div class="rpg99-topbar">
         <button class="rpg99-fbtn" onclick="App.navBack()">←</button>
@@ -1399,6 +1457,22 @@ Object.assign(App, {
         <div class="bar"><i style="width:${maxed ? 100 : barW}%"></i><span>${maxed ? 'MAX' : prog.pct + '%'}</span></div>
       </div>
       ${this._rpg99CalHtml()}
+      <div class="rpg99-portals">
+        <div class="rpg99-portal quit" onclick="App.rpg99GoQuit99()" title="戒断数据 · 四魔封印">
+          <span class="p-go">直达</span>
+          <span class="p-ico">👹</span>
+          <span class="p-n">四魔封印</span>
+          <span class="p-d">戒断数据 · 星空封魔<br>反向打卡 · 对决</span>
+        </div>
+        <div class="rpg99-portal boss" onclick="App.gotoWb('boss99')" title="挑战中心 · 月度魔物">
+          <span class="p-go">直达</span>
+          <span class="p-ico">🐉</span>
+          <span class="p-n">月度魔物</span>
+          <span class="p-d">山谷Boss讨伐 · 任务削弱<br>经验 +40 · 宝石 +36</span>
+          <span class="p-emb" title="血月"></span>
+          <span class="p-veil"></span>
+        </div>
+      </div>
       ${this._rpg99DeckHtml()}
       <div class="rpg99-dock${avail > 0 ? ' ready' : ''}">
         <div class="rpg99-chestwrap" onclick="App.rpg99ChestOpen()">
@@ -1413,5 +1487,11 @@ Object.assign(App, {
       </div>
       <div class="rpg99-foot">— 独行信条 · SOLO CODE —</div>
     </div>`;
+  },
+  // v12.9.51 个人中心 · 直达传送门：四魔封印（戒断数据 · 数据中心子库）
+  rpg99GoQuit99() {
+    try { this._sfx99 && this._sfx99('liquid'); } catch (e) {}
+    this.gotoWb('datacenter99');
+    this._dc99Set('tab', 'quit99');
   },
 });

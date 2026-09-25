@@ -139,7 +139,7 @@ Object.assign(App, {
     if (!rec) return 0;
     let total = 0, done = 0;
     try {
-      (CONFIG.medications || []).forEach(m => { total++; if (rec.medications && rec.medications[m.id] && rec.medications[m.id].done) done++; });
+      (this._medsForMe ? this._medsForMe() : (CONFIG.medications || [])).forEach(m => { total++; if (rec.medications && rec.medications[m.id] && rec.medications[m.id].done) done++; });
       total += 2; if (rec.sleep && rec.sleep.night && rec.sleep.night.slept) done++; if (rec.sleep && rec.sleep.noon && rec.sleep.noon.slept) done++;
       total += 4; if (rec.diet && rec.diet.meals && rec.diet.meals.breakfast) done++; if (rec.diet && rec.diet.meals && rec.diet.meals.lunch) done++; if (rec.diet && rec.diet.meals && rec.diet.meals.dinner) done++; if (rec.diet && rec.diet.water >= (CONFIG.diet ? CONFIG.diet.waterMin : 0)) done++;
       ['face','oral','private','foot','bed','desk'].forEach(k => { total++; if (rec.hygiene && rec.hygiene[k]) done++; });
@@ -166,15 +166,28 @@ Object.assign(App, {
     if (text == null) return false;
     return this._SENS_RE.test(String(text));
   },
+  // ===== v12.9.50 账号级隐私门控（用户指令 · 铁律）=====
+  //   HIV/TP/HPV 等敏感健康内容（内置药物清单、复查提醒、健康隐私分区、敏感文案）
+  //   仅限指定账号 1936956836@qq.com 登录时可见；其他任何账号一律不显示、不可解锁、
+  //   不含任何相关描述（朋友体验时绝不看到个人疾病隐私）。数据随账号云端隔离，
+  //   故非授权账号自身的就医记录不受掩码影响（掩码仅保护授权账号的会话隐私）。
+  _isAuthorizedAccount() {
+    try {
+      const u = this._c99 && this._c99.user;
+      return !!(u && u.email && String(u.email).trim().toLowerCase() === '1936956836@qq.com');
+    } catch (e) { return false; }
+  },
   // unlock:true(已解锁) 还原原文；unlock:false 命中则 mask
   _sensBlur(text, alt) {
     if (text == null) return '';
     const s = String(text);
+    if (!this._isAuthorizedAccount()) return s;   // 非授权账号：数据各归各账号，自身数据不掩码
     if (this._isHealthUnlocked()) return s;
     if (!this._healthSensMatch(s)) return s;
     return alt || '🔒 个人隐私项';
   },
   _isHealthUnlocked() {
+    if (!this._isAuthorizedAccount()) return false;   // v12.9.50 非授权账号：敏感健康内容永久锁定（不可解锁）
     try {
       const ss = +(sessionStorage.getItem('hiv_unlocked') || 0);
       if (ss > Date.now()) return true;
@@ -186,10 +199,30 @@ Object.assign(App, {
     } catch(e){}
     return false;
   },
+  // ===== v12.9.50 个人用药清单：授权账号 = 内置清单（CONFIG.medications）；
+  //   其他账号 = 自己添加的药（meds99.list 默认为空，需自己填；「吃药」打卡需手动开启才生效）=====
+  _myMeds99() {
+    try {
+      const d = Store.load();
+      const m = d.meds99;
+      if (!m || typeof m !== 'object') return { list: [], checkinOn: false };
+      return { list: Array.isArray(m.list) ? m.list : [], checkinOn: !!m.checkinOn };
+    } catch (e) { return { list: [], checkinOn: false }; }
+  },
+  _meds99Save(m) {
+    const d = Store.load();
+    d.meds99 = { list: Array.isArray(m && m.list) ? m.list : [], checkinOn: !!(m && m.checkinOn) };
+    Store.save(d);
+  },
+  // 当前账号生效的用药清单（打卡/统计/提醒统一走此口径）
+  _medsForMe() {
+    return this._isAuthorizedAccount() ? (CONFIG.medications || []) : this._myMeds99().list;
+  },
   // ===== v2.0.6：健康隐私强锁（不提示密码具体值）=====
   //   用户点击用药/复查区域时，若未解锁，弹窗要求输入密码；不对密码做任何提示。
   //   与 healthSensitiveUnlock() 共用同一个 sessionStorage key 'hiv_unlocked' 与密码 2004。
   _requireHealthUnlock(onOk) {
+    if (!this._isAuthorizedAccount()) { this._flash('🔒 该隐私区不适用于当前账号'); return false; }   // v12.9.50 非授权账号永不可解锁（防控制台绕过）
     if (this._isHealthUnlocked()) { try { onOk && onOk(); } catch(_){} return true; }
     const modal = (labelEl, placeholderText) => {
       this._modal({

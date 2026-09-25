@@ -298,7 +298,7 @@ Object.assign(App, {
       if (gems > 0) setTimeout(() => this._flash(`💎 周结算：${zeros.length} 只魔物活性保持 0，+${gems} 宝石已入账`), 1500);
     } catch (e) {}
   },
-  // ===== 日结算（惰魔：前一日无运动/学习 → +1 · 贪魔：前一日花销 > 200 → +1 · 首启不追溯 · 逐日补账最多 7 天）=====
+  // ===== 日结算（v12.9.54 通用规定：当日联动卡无任何打卡 → 对应魔物 +1 · 惰魔：前一日无运动/学习 → +1 · 贪魔：前一日花销 > 200 → +1 · 首启不追溯 · 逐日补账最多 7 天）=====
   _quit99Touched(dk, cardId) {
     try {
       const v = ((Store.getHabit99().days || {})[dk] || {})[cardId];
@@ -330,6 +330,24 @@ Object.assign(App, {
         if (next >= today) break;
         const day = d.days[next] = d.days[next] || {};
         day.pass = day.pass || {};
+        // v12.9.54 通用规定（用户指令）：系统检测不到当日联动内容的打卡 → 对应魔物 +1 活性
+        //   联动卡按魔物档案 cards 字段（淫←正气 · 娱←正心 · 惰←正姿 · 贪←正魂+正言）；幂等 flag miss_<mon>
+        const defs = this._quit99Defs();
+        ['yin', 'yu', 'duo', 'tan'].forEach(mon => {
+          const mkey = 'miss_' + mon;
+          if (day.pass[mkey]) return;
+          const cards = (defs[mon] && defs[mon].cards) || [];
+          const any = cards.some(id => this._quit99Touched(next, id));
+          if (!any) {
+            day.pass[mkey] = 1;
+            const a = this._quit99Bump(d, mon, next);
+            const cardNames = cards.map(id => {
+              const hc = ((typeof CONFIG !== 'undefined' && CONFIG.habitCards) || []).find(x => x.id === id);
+              return hc ? hc.name : id;
+            }).join('/');
+            notes.push(`${defs[mon].ico} ${defs[mon].n}趁你 ${next} 未打卡「${cardNames}」，活性 +1（${a}/5）`);
+          }
+        });
         // 惰魔：前一日无运动/学习
         if (!day.pass.duo) {
           const grew = ['fitness', 'studyMorning', 'studyNoon', 'studyEvening', 'focus'].some(id => this._quit99Touched(next, id));
@@ -600,7 +618,7 @@ Object.assign(App, {
         ${weekRows}
         <div style="font-size:10.5px;color:#b91c1c;margin-top:6px">结算时快照各魔物活性（冲破封印中的魔物不计）· 宝石入宠物钱包</div>
       </div>
-      ${this._u99StatusCard ? this._u99StatusCard() : ''}
+      ${this._nat99StatusCard ? this._nat99StatusCard() : ''}
       <div style="margin-top:14px"><button class="btn btn-ghost" onclick="App.navBack()">← 返回上一页</button></div>
     </div>`;
   },
@@ -750,6 +768,7 @@ Object.assign(App, {
       <div style="margin-top:7px">${srcRows}</div>
       <div class="q99-note" style="font-size:10.5px;color:#b91c1c;line-height:1.9;padding:9px 11px;background:#fef2f2;border:2px dashed #fca5a5;margin-top:9px">
         ${def.cardNote}${def.growNote ? '<br>' + def.growNote : ''}${def.costNote ? '<br>' + def.costNote : ''}<br>
+        通用规定：当日联动卡无任何打卡记录 → 次日回顾时活性 +1（懈怠即喂养）<br>
         活性满 5 立即冲破封印 → 必须与你的战士对决（胜利后重新封印，活性回落 3）
       </div>`,
       actions: m.broke

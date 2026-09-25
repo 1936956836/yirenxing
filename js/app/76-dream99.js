@@ -73,15 +73,12 @@ Object.assign(App, {
     } catch (e) { return false; }
   },
 
-  // ==================== 语音速记（浏览器原生 SpeechRecognition）====================
+  // ==================== 语音速记（统一语音适配层：客户端 Vosk 离线识别 / 网页 SpeechRecognition）====================
   _dream99SR() {
-    try { return (typeof window !== 'undefined' && window) ? (window.SpeechRecognition || window.webkitSpeechRecognition) : null; }
-    catch (e) { return null; }
+    return this._sr99Create ? this._sr99Create() : null;
   },
   // 必须在用户点击事件栈内调用（浏览器安全策略）；再点一次停止
   _dream99Voice(btn) {
-    const SR = this._dream99SR();
-    if (!SR) return this._flash('此浏览器不支持语音识别（试试 Chrome / Edge / iOS Safari / 微信）——用键盘把梦敲下来也一样 🌙');
     if (this._dm99RecOn && this._dm99Rec) {
       this._dm99RecOn = false; // 先清标志再 stop，防 onend 里自动重启
       try { this._dm99Rec.stop(); } catch (e) {}
@@ -90,7 +87,10 @@ Object.assign(App, {
     const ta = document.getElementById('dream99Text');
     if (!ta) return;
     let rec;
-    try { rec = new SR(); } catch (e) { return this._flash('语音识别启动失败——试试刷新页面，或直接用文字记录 🌙'); }
+    try { rec = this._dream99SR(); } catch (e) { rec = null; }
+    if (!rec) return this._flash(!!window.__PHONE_EDITION__
+      ? '🎤 语音识别启动失败——再点一次试试（首次会弹出话筒权限申请），或直接用文字记录 🌙'
+      : '此浏览器不支持语音识别（试试 Chrome / Edge / iOS Safari / 微信）——用键盘把梦敲下来也一样 🌙');
     rec.lang = 'zh-CN';
     rec.continuous = true;
     rec.interimResults = true;
@@ -113,7 +113,7 @@ Object.assign(App, {
     rec.onerror = (e) => {
       const k = (e && e.error) || '';
       this._dm99RecOn = false;
-      if (k === 'not-allowed' || k === 'service-not-allowed') this._flash('🎤 麦克风权限被拒绝了——浏览器地址栏 🔒 里允许麦克风后重试');
+      if (k === 'not-allowed' || k === 'service-not-allowed') this._flash(this._mic99Tip ? this._mic99Tip() : '🎤 麦克风权限被拒绝了');
       else if (k === 'no-speech') this._flash('🎤 没听到声音——再点一次开始说');
       else if (k === 'network') this._flash('🎤 语音识别需要联网（离线时请用文字记录）');
       else if (k !== 'aborted') this._flash('🎤 语音识别开小差了（' + (k || '未知错误') + '）——已说的内容还在输入框里');

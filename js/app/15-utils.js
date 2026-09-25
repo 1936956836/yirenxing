@@ -168,7 +168,7 @@ Object.assign(App, {
       try { document.querySelectorAll('.sync-sub-tab').forEach(t => t.classList.toggle('active', t.dataset.sub === cleanView)); } catch(e){}
     }
     // v1.0.1 休息模式已彻底移除：不再按时间段限制任何交互
-    // （农场/牧场/柯基等挂机体系已随 v7.0 拆分迁出，主程序不再保留相关夜间逻辑）
+    // （农场/牧场等挂机体系已随 v7.0 拆分迁出，主程序不再保留相关夜间逻辑）
     // 防御性：旧书签 navigate('workbench')（v10.0 旧聚合首页已删除）→ 安全回落习惯子页
     if (cleanView === 'workbench') this._wbView = 'habit';
     // v2026.0906：旧视图安全重定向 —— 这些顶层视图（rewards/logs/ledger/diary/todo/outfit）的

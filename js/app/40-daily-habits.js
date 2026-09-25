@@ -1101,7 +1101,8 @@ Object.assign(App, {
   // ====== 奖励系统 ======
   // 成就完成判定：返回 id→boolean 的映射（基于今日记录自动检测）
   _medsDone(rec) {
-    const meds = CONFIG.medications || [];
+    // v12.9.50 账号口径：授权账号=内置清单；其他账号=自己的 meds99 清单（为空则不参与成就判定）
+    const meds = this._medsForMe ? this._medsForMe() : (CONFIG.medications || []);
     return meds.length > 0 && meds.every(m => rec.medications[m.id] && rec.medications[m.id].done);
   },
   _subjectMaxMin(rec) {

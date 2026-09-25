@@ -179,8 +179,7 @@ Object.assign(App, {
     // v12.2：已删除聚神界面的跳动计时钟（时间压力与「此刻只此一事」相悖，违背无压力设计）——
     // 只留进入时间戳，退出时温和结算本次时长并计入专注账本
     this._js99Start = Date.now();
-    // v12.9.41 聚神防切走（客户端专属）：UsageStats 事件流轮询——期间切去其他 App = 自动判破戒喂魔
-    try { this._u99WatchStart && this._u99WatchStart(); } catch (e) {}
+    // v12.9.59 聚神防切走（使用统计事件流轮询）已随自造插件下线——聚神/四魔玩法不受影响
   },
   mode99ExitJushen() {
     const ov = document.getElementById('mode99Jushen');
@@ -190,7 +189,7 @@ Object.assign(App, {
     clearTimeout(this._js99ResizeT); this._js99ResizeT = null;
     ov.remove();
     try { document.body.style.overflow = ''; } catch (e) {}
-    try { this._u99WatchStop && this._u99WatchStop(); } catch (e) {}   // v12.9.41 停聚神事件流轮询
+
     const doneMs = Date.now() - (this._js99Start || Date.now());
     this._js99Start = null;
     this._mode99 = 'qingyang';
@@ -338,179 +337,4 @@ Object.assign(App, {
     </svg>`;
   },
 
-  // ==================== 白噪音引擎（Web Audio 全合成）====================
-  _wn99OK() {
-    try { return !!(typeof window !== 'undefined' && (window.AudioContext || window.webkitAudioContext)); }
-    catch (e) { return false; }
-  },
-  _wn99EnsureCtx() {
-    if (!this._wn99Ctx) {
-      const AC = window.AudioContext || window.webkitAudioContext;
-      this._wn99ctxClass = AC;
-      this._wn99Ctx = new AC();
-    }
-    if (this._wn99Ctx.state === 'suspended') { try { this._wn99Ctx.resume().catch(() => {}); } catch (e) {} }
-    return this._wn99Ctx;
-  },
-  _wn99Buf(kind) {
-    const ctx = this._wn99Ctx;
-    const cacheKey = '_wn99Buf_' + kind;
-    if (this[cacheKey]) return this[cacheKey];
-    const seconds = 2.5;
-    const len = Math.max(1, Math.floor(ctx.sampleRate * seconds));
-    const buf = ctx.createBuffer(1, len, ctx.sampleRate);
-    const data = buf.getChannelData(0);
-    if (kind === 'brown') {
-      let last = 0;
-      for (let i = 0; i < len; i++) { const w = Math.random() * 2 - 1; last = (last + 0.02 * w) / 1.02; data[i] = last * 3.6; }
-    } else {
-      for (let i = 0; i < len; i++) data[i] = Math.random() * 2 - 1;
-    }
-    this[cacheKey] = buf;
-    return buf;
-  },
-  // kind: 'rain'（雨天：雨声+鸟啼）/ 'fire'（篝火+山风）
-  _wn99Start(kind) {
-    if (!this._wn99OK()) return false;
-    try {
-      this._wn99Stop();
-      const ctx = this._wn99EnsureCtx();
-      const master = ctx.createGain();
-      master.gain.value = 0;
-      master.connect(ctx.destination);
-      const nodes = [master];
-      const timers = [];
-      const loop = (buf) => { const s = ctx.createBufferSource(); s.buffer = buf; s.loop = true; nodes.push(s); return s; };
-      const filt = (type, freq, q) => { const f = ctx.createBiquadFilter(); f.type = type; f.frequency.value = freq; if (q) f.Q.value = q; nodes.push(f); return f; };
-      const gain = (v) => { const g = ctx.createGain(); g.gain.value = v; nodes.push(g); return g; };
-      // 40Hz 伽马波幅值调制（轻度共振引导 · 平静/专注）
-      const gamma = ctx.createOscillator(); gamma.frequency.value = 40;
-      const gammaD = gain(0.12); gamma.connect(gammaD); gammaD.connect(master.gain); gamma.start(); nodes.push(gamma);
-
-      if (kind === 'rain') {
-        // 雨声主体：白噪 → 低通
-        const s1 = loop(this._wn99Buf('white'));
-        s1.connect(filt('lowpass', 1250)).connect(gain(0.16)).connect(master); s1.start();
-        // 远处阵雨起伏：带通白噪 + 慢 LFO
-        const s2 = loop(this._wn99Buf('white'));
-        const g2 = gain(0.055);
-        s2.connect(filt('bandpass', 420, 0.6)).connect(g2).connect(master); s2.start();
-        const lfo = ctx.createOscillator(); lfo.frequency.value = 0.06;
-        const lfoD = gain(0.03); lfo.connect(lfoD); lfoD.connect(g2.gain); lfo.start(); nodes.push(lfo);
-        this._wn99Birds(timers, ctx, master);
-      } else {
-        // 篝火底焰：棕噪 → 低通
-        const s1 = loop(this._wn99Buf('brown'));
-        s1.connect(filt('lowpass', 300)).connect(gain(0.34)).connect(master); s1.start();
-        // 噼啪爆裂：随机短促白噪粒
-        this._wn99Crackle(timers, ctx, master);
-        // 山风掠过：带通白噪 + 慢 LFO（增益与频率双重起伏 = 阵风）
-        const s2 = loop(this._wn99Buf('white'));
-        const bp = filt('bandpass', 480, 0.7);
-        const gw = gain(0.045);
-        s2.connect(bp).connect(gw).connect(master); s2.start();
-        const lfo = ctx.createOscillator(); lfo.frequency.value = 0.05;
-        const lfoD = gain(0.032); lfo.connect(lfoD); lfoD.connect(gw.gain); lfo.start(); nodes.push(lfo);
-        const lfo2 = ctx.createOscillator(); lfo2.frequency.value = 0.07;
-        const lfo2D = gain(140); lfo2.connect(lfo2D); lfo2D.connect(bp.frequency); lfo2.start(); nodes.push(lfo2);
-      }
-      const t0 = ctx.currentTime;
-      master.gain.setValueAtTime(0, t0);
-      master.gain.linearRampToValueAtTime(0.9, t0 + 1.4); // 淡入，不出爆音
-      this._wn99 = { ctx, master, nodes, timers, kind, on: true };
-      return true;
-    } catch (e) {
-      try { console.warn('[白噪音] 启动失败：', (e && e.message) || e); } catch (_) {}
-      this._wn99 = null;
-      return false;
-    }
-  },
-  // 鸟啼：随机间隔唱 2~4 个音符的小短句（正弦扫频 + 随机声像）
-  _wn99Birds(timers, ctx, out) {
-    const sing = () => {
-      if (!this._wn99 || this._wn99.kind !== 'rain') return;
-      try {
-        const t0 = ctx.currentTime + 0.05;
-        const n = 2 + Math.floor(Math.random() * 3);
-        const g = ctx.createGain(); g.gain.value = 0.0001;
-        let dest = g;
-        if (ctx.createStereoPanner) { const p = ctx.createStereoPanner(); p.pan.value = Math.random() * 1.6 - 0.8; g.connect(p); p.connect(out); }
-        else g.connect(out);
-        const o = ctx.createOscillator(); o.type = 'sine';
-        const base = 2100 + Math.random() * 900;
-        for (let i = 0; i < n; i++) {
-          const st = t0 + i * 0.17;
-          const f0 = base + Math.random() * 300;
-          o.frequency.setValueAtTime(f0, st);
-          o.frequency.exponentialRampToValueAtTime(f0 + 320 + Math.random() * 520, st + 0.08);
-          o.frequency.exponentialRampToValueAtTime(f0 + 130, st + 0.15);
-          g.gain.setValueAtTime(0.0001, st);
-          g.gain.exponentialRampToValueAtTime(0.05, st + 0.03);
-          g.gain.exponentialRampToValueAtTime(0.0001, st + 0.16);
-        }
-        o.connect(g);
-        o.start(t0); o.stop(t0 + n * 0.17 + 0.25);
-      } catch (e) {}
-      timers.push(setTimeout(sing, 4500 + Math.random() * 9000));
-    };
-    timers.push(setTimeout(sing, 1500 + Math.random() * 2500));
-  },
-  // 篝火噼啪：随机间隔的高频短噪粒
-  _wn99Crackle(timers, ctx, out) {
-    const tick = () => {
-      if (!this._wn99 || this._wn99.kind !== 'fire') return;
-      try {
-        const t0 = ctx.currentTime + 0.02;
-        const dur = 0.02 + Math.random() * 0.06;
-        const s = ctx.createBufferSource();
-        s.buffer = this._wn99Buf('white');
-        s.playbackRate.value = 0.7 + Math.random() * 0.8;
-        const hp = ctx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 900 + Math.random() * 1600;
-        const g = ctx.createGain();
-        g.gain.setValueAtTime(0.0001, t0);
-        g.gain.exponentialRampToValueAtTime(0.035 + Math.random() * 0.075, t0 + 0.008);
-        g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
-        s.connect(hp); hp.connect(g); g.connect(out);
-        s.start(t0, Math.random() * 1.5, dur + 0.05);
-      } catch (e) {}
-      timers.push(setTimeout(tick, 60 + Math.random() * 400));
-    };
-    timers.push(setTimeout(tick, 200));
-  },
-  _wn99Stop() {
-    const w = this._wn99;
-    if (!w) return;
-    this._wn99 = null; // 先置空：鸟啼/噼啪调度器看到后自然停
-    try {
-      const t = w.ctx.currentTime;
-      w.master.gain.cancelScheduledValues(t);
-      w.master.gain.setValueAtTime(w.master.gain.value, t);
-      w.master.gain.linearRampToValueAtTime(0, t + 0.5); // 淡出
-    } catch (e) {}
-    (w.timers || []).forEach(id => clearTimeout(id));
-    setTimeout(() => {
-      try {
-        (w.nodes || []).forEach(n => { try { if (n.stop) n.stop(); } catch (e) {} try { n.disconnect(); } catch (e) {} });
-      } catch (e) {}
-    }, 700);
-  },
-  // 专注界面里的白噪音开关（overlay 内按钮）
-  wn99Toggle(btn) {
-    const w = this._wn99;
-    if (!w) return;
-    const ctx = w.ctx;
-    const t = ctx.currentTime;
-    w.master.gain.cancelScheduledValues(t);
-    if (w.on) {
-      w.master.gain.setValueAtTime(w.master.gain.value, t);
-      w.master.gain.linearRampToValueAtTime(0, t + 0.4);
-      w.on = false;
-      if (btn) { btn.textContent = '🔇 白噪音已关'; btn.classList.remove('on'); }
-    } else {
-      w.master.gain.setValueAtTime(Math.max(0.0001, w.master.gain.value), t);
-      w.master.gain.linearRampToValueAtTime(0.9, t + 0.6);
-      w.on = true;
-      if (btn) { btn.textContent = '🔊 白噪音开着'; btn.classList.add('on'); }
-    }
-  },
 });

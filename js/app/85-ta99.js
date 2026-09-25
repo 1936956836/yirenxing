@@ -10,7 +10,7 @@
 //   · 隐私红线：HIV / HPV / TP 等健康隐私记录永不出密码箱，不进入共享快照
 // 风格：克制表达 —— 主页一张 hero + 七张导航卡；每个子页只做一件事；留白多、层级少、玫瑰色单点缀
 Object.assign(App, {
-  _ta99: { tab: 'home', moments: 'ta', row: null, invite: null, msg: '' },
+  _ta99: { tab: 'home', moments: 'ta', momentsLk: 'daily', row: null, invite: null, msg: '' },
 
   // ===== 自动搭建：ta99_init() 幂等函数 =====
   // 终端用户首次进入【Ta】时，App 会自动 RPC 调用 ta99_init() 完成全部建表/RLS/函数搭建——
@@ -190,15 +190,33 @@ select public.ta99_upgrade();`,
   _wbTa99(wb, W) {
     this.ta99Refresh(); // 异步拉取云端（邀请码/情侣行/绑定请求），完成后局部刷新 #ta99-body
     this._ta99Poll();   // v12.9.48 轻轮询：对方发起绑定 / 接受时自动出现，不用手动刷新
+    setTimeout(() => { try { this.ta99FlowBind(); } catch (e) {} }, 0);   // v12.9.49 封面流首次接线
     return `<div id="ta99-body">${this._ta99Render()}</div>`;
   },
   // v12.9.48 绑定轻轮询（20s）：只查绑定状态，变化才局部重绘；正在输入邮箱/邀请码时跳过本轮
+  // v12.9.49 已绑定态升级：改为 45s 共同数据轮询——对方发约会卡 / 更新目标 / 农场浇水 / 上传相册，
+  //   停留在本页时自动出现（updated_at 变了才拉全量重绘，平时零流量）
   _ta99Poll() {
     clearInterval(this.__ta99PollInt);
+    this.__ta99RowUpd = null;
     this.__ta99PollInt = setInterval(async () => {
       const c = this._c99, t = this._ta99;
       if (!document.getElementById('ta99-body') || !c || !c.client || !c.user) return;
-      if (t.row) { clearInterval(this.__ta99PollInt); return; }
+      // —— 已绑定：共同数据轮询（45s 节流）——
+      if (t.row) {
+        try {
+          const now = Date.now();
+          if (now - (this.__ta99RowAt || 0) < 45000) return;
+          this.__ta99RowAt = now;
+          const { data: row } = await c.client.from('couples99').select('id, updated_at')
+            .or(`user_a.eq.${c.user.id},user_b.eq.${c.user.id}`).maybeSingle();
+          if (row && this.__ta99RowUpd && row.updated_at !== this.__ta99RowUpd) {
+            await this.ta99Refresh(true);   // 对方有动作：全量刷新（重绘当前子页）
+          }
+          if (row) this.__ta99RowUpd = row.updated_at;
+        } catch (e) {}
+        return;
+      }
       try {
         const ae = document.activeElement;
         if (ae && (ae.id === 'ta99-email-in' || ae.id === 'ta99-code-in')) return;
@@ -241,7 +259,11 @@ select public.ta99_upgrade();`,
   _ta99Rerender() {
     try {
       const el = document.getElementById('ta99-body');
-      if (el && this._wbView === 'ta99') el.innerHTML = this._ta99Render();
+      if (el && this._wbView === 'ta99') {
+        el.innerHTML = this._ta99Render();
+        // v12.9.49 封面流：主页渲染后接线 3D 轮播（滑动/点按）
+        if (this._ta99.tab === 'home' || !this._ta99.tab) this.ta99FlowBind();
+      }
     } catch (e) {}
   },
   _ta99Msg(text) {
@@ -352,7 +374,10 @@ select public.ta99_upgrade();`,
   async _ta99PushShare(row) {
     const target = this._ta99MyPos(row) === 'a' ? 'share_a' : 'share_b';
     try {
-      const { error } = await this._c99.client.rpc('ta99_write', { target, data: this._ta99Snapshot() });
+      const data = this._ta99Snapshot();
+      // v12.9.68 【此时此刻】：安卓端附加设备状态快照（系统采集按权限中心开关过滤 + 运动学习内部业务）
+      try { const lk = await this._lk99Snapshot(); if (lk) data.lookus = lk; } catch (e) {}
+      const { error } = await this._c99.client.rpc('ta99_write', { target, data });
       if (!error) Store.setSetting('ta99_share_pushed', String(Date.now()));
     } catch (e) {}
   },
@@ -682,10 +707,17 @@ select public.ta99_upgrade();`,
     if (t.tab === 'notes') return this._ta99NotesView(row, myPos);
     if (t.tab === 'wishes') return this._ta99WishesView(row, myPos);
     if (t.tab === 'qa') return this._ta99QaView(row, myPos);
+    // v12.9.49 六大新功能
+    if (t.tab === 'dates') return this._ta99DatesView(row, myPos);
+    if (t.tab === 'goals') return this._ta99GoalsView(row, myPos);
+    if (t.tab === 'farm') return this._ta99FarmView(row, myPos);
+    if (t.tab === 'album') return this._ta99AlbumView(row, myPos);
+    if (t.tab === 'places') return this._ta99PlacesView(row, myPos);
+    if (t.tab === 'dress') return this._ta99DressView(row, myPos);
     return this._ta99HomeView(row, extra, myPos);
   },
 
-  // —— 主页：hero + 导航卡 ——
+  // —— 主页：v12.9.49 封面流重做（中间最大 · 两边立体翘起 · 左右滑有透视景深）——
   _ta99HomeView(row, extra, myPos) {
     const since = row.since || '';
     const days = since ? Math.max(0, Math.round((new Date(Store.today()) - new Date(since)) / 86400000)) : 0;
@@ -701,7 +733,6 @@ select public.ta99_upgrade();`,
     const todos = Array.isArray(extra.todos) ? extra.todos : [];
     const mineForTa = todos.filter(x => x.by === myPos).length;
     const taForMe = todos.filter(x => x.by !== myPos).length;
-    // v12.9.22 深化：小纸条未读 / 心愿单进度 / 每日一问状态
     const notes = Array.isArray(extra.notes) ? extra.notes : [];
     const noteUnread = this._ta99NoteUnread(extra, myPos);
     const notesSub = noteUnread > 0
@@ -716,8 +747,47 @@ select public.ta99_upgrade();`,
     const qToday = qa[Store.today()] || {};
     const meQ = !!qToday[myPos], taQ = !!((qToday[myPos === 'a' ? 'b' : 'a']));
     const qaSub = (meQ && taQ) ? '今天的问答完成 💬' : (meQ ? '已答 · 等Ta' : (taQ ? 'Ta答了，就差你' : '今天的问题还没答'));
+    // v12.9.49 新功能副标
+    const dates = Array.isArray(extra.dates) ? extra.dates : [];
+    const datePend = dates.filter(x => x.st === 'pending').length;
+    const datesSub = datePend ? `有 ${datePend} 个约会待回应 💘` : (dates.length ? `最近约过 ${dates.filter(x => x.st === 'yes').length} 次` : '发一张约会邀请卡');
+    const goals = Array.isArray(extra.goals) ? extra.goals : [];
+    const goalOpen = goals.filter(x => !x.done).length;
+    const goalsSub = goals.length
+      ? (goalOpen ? `${goalOpen} 个目标进行中 · 总进度 ${Math.round(goals.filter(x => !x.done).reduce((a, g) => a + Math.min(1, (g.cur || 0) / Math.max(1, g.target || 1)), 0) / Math.max(1, goalOpen) * 100)}%` : '目标都完成啦 🏅')
+      : '一起攒钱旅行 / 减肥 / 学做饭';
+    const farm = extra.farm || {};
+    const plots = Array.isArray(farm.plots) ? farm.plots : [];
+    const farmReady = plots.filter(p => p.crop && !p.done && this._ta99FarmReady(p)).length;
+    const farmSub = plots.filter(p => p.crop && !p.done).length
+      ? (farmReady ? `${farmReady} 块地成熟啦，快收获 🌾` : `${plots.filter(p => p.crop && !p.done).length} 块地在长 · 记得浇水`)
+      : '开一块地，一起种点什么';
+    const album = Array.isArray(extra.album) ? extra.album : [];
+    const albumSub = album.length ? `${album.length} 张回忆 · 最近 ${new Date(album[0].ts).toISOString().slice(0, 10)}` : '上传第一张合照';
+    const places = Array.isArray(extra.places) ? extra.places : [];
+    const placesSub = places.length ? `一起去过 ${places.length} 个地方` : '记下你们的第一站';
+    const sweet = +extra.sweet || 0;
+    const dressSub = `甜蜜值 ${sweet} · ${sweet >= 300 ? '像素情侣' : sweet >= 150 ? '星空' : '粉爱心'}主题`;
+    // 封面流卡池（中卡最大 · 两侧透视）
+    const flow = [
+      { k: 'sign', ico: '💞', n: '情侣签到', sub: signSub, grad: 'linear-gradient(150deg,#fecdd3,#fbcfe8,#fff)' },
+      { k: 'dates', ico: '💘', n: '约会邀请', sub: datesSub, grad: 'linear-gradient(150deg,#fda4af,#fecdd3,#fff)' },
+      { k: 'farm', ico: '🌾', n: '情侣农场', sub: farmSub, grad: 'linear-gradient(150deg,#bbf7d0,#d9f99d,#fff)' },
+      { k: 'goals', ico: '🏆', n: '共同目标', sub: goalsSub, grad: 'linear-gradient(150deg,#fde68a,#fef3c7,#fff)' },
+      { k: 'album', ico: '📷', n: '回忆相册', sub: albumSub, grad: 'linear-gradient(150deg,#c7d2fe,#e0e7ff,#fff)' },
+      { k: 'notes', ico: '💌', n: '小纸条', sub: notesSub, grad: 'linear-gradient(150deg,#fbcfe8,#fce7f3,#fff)' },
+      { k: 'moments', ico: '🫧', n: 'Ta的近况', sub: '此刻 · 打卡 · 经济 · 医疗', grad: 'linear-gradient(150deg,#bae6fd,#e0f2fe,#fff)' },
+      { k: 'anni', ico: '🎂', n: '纪念日', sub: anniSub, grad: 'linear-gradient(150deg,#fef08a,#fefce8,#fff)' },
+      { k: 'places', ico: '👣', n: '双人足迹', sub: placesSub, grad: 'linear-gradient(150deg,#a7f3d0,#d1fae5,#fff)' },
+      { k: 'todos', ico: '📝', n: '互相打卡', sub: `我给Ta ${mineForTa} 件 · Ta给我 ${taForMe} 件`, grad: 'linear-gradient(150deg,#ddd6fe,#ede9fe,#fff)' },
+      { k: 'wishes', ico: '🌠', n: '心愿单', sub: wishesSub, grad: 'linear-gradient(150deg,#bfdbfe,#dbeafe,#fff)' },
+      { k: 'qa', ico: '💬', n: '每日一问', sub: qaSub, grad: 'linear-gradient(150deg,#fbcfe8,#ffe4e6,#fff)' },
+      { k: 'dress', ico: '👑', n: '专属装扮', sub: dressSub, grad: 'linear-gradient(150deg,#e9d5ff,#f5d0fe,#fff)' },
+    ];
+    // 装扮主题（v12.9.49 extra.dress.theme · 甜蜜值解锁）
+    const theme = ((extra.dress || {}).theme) || 'pink';
     return `
-    <div class="card ta99-hero">
+    <div class="card ta99-hero ta99-theme-${this.esc(theme)}">
       <div class="ta99-hero-cats">${this._pet99CatHtml({ px: 58 })}<span class="ta99-hero-heart">❤</span><span class="pxcat ta99-cat-r" style="width:58px;height:61.6px;background-size:calc(58px*8) 61.6px"></span></div>
       ${since ? `
         <div class="ta99-days-num">${days}</div>
@@ -726,32 +796,66 @@ select public.ta99_upgrade();`,
       : `
         <div style="font-size:14px;font-weight:800;margin-top:14px">你们还没有记录在一起的日子</div>
         <button class="btn btn-primary" style="background:linear-gradient(90deg,#e11d48,#fb7185);border:0;margin-top:10px" onclick="App.ta99Tab('anni')">🎂 去设置</button>`}
-      <div style="margin-top:10px"><a href="javascript:void(0)" style="font-size:11.5px;color:#94a3b8" onclick="App.ta99Refresh(true)">刷新Ta的近况 ↻</a></div>
+      <div class="ta99-sweet">💕 甜蜜值 <b>${sweet}</b><i>Lv.${Math.floor(sweet / 100)}</i></div>
+      <div style="margin-top:8px"><a href="javascript:void(0)" style="font-size:11.5px;color:#94a3b8" onclick="App.ta99Refresh(true)">刷新Ta的近况 ↻</a></div>
     </div>
-    <div class="wb-entry-grid">
-      <div class="card wb-entry-card" onclick="App.ta99Tab('sign')">
-        <div class="wb-ico">💞</div><div class="wb-name">情侣签到</div><div class="wb-hint">${this.esc(signSub)}</div>
+    <div class="ta99-flow" id="ta99Flow">
+      <div class="ta99-flow-stage" id="ta99FlowStage">
+        ${flow.map((f, i) => `
+        <div class="ta99-cover" data-i="${i}" data-k="${f.k}" style="background:${f.grad}">
+          <div class="ta99-cover-ico">${f.ico}</div>
+          <div class="ta99-cover-n">${f.n}</div>
+          <div class="ta99-cover-sub">${this.esc(f.sub)}</div>
+          <div class="ta99-cover-go">进入 ›</div>
+        </div>`).join('')}
       </div>
-      <div class="card wb-entry-card" onclick="App.ta99Tab('moments')">
-        <div class="wb-ico">🫧</div><div class="wb-name">Ta的近况</div><div class="wb-hint">打卡 · 经济 · 医疗</div>
-      </div>
-      <div class="card wb-entry-card" onclick="App.ta99Tab('anni')">
-        <div class="wb-ico">🎂</div><div class="wb-name">纪念日</div><div class="wb-hint">${this.esc(anniSub)}</div>
-      </div>
-      <div class="card wb-entry-card" onclick="App.ta99Tab('todos')">
-        <div class="wb-ico">📝</div><div class="wb-name">互相打卡</div><div class="wb-hint">我给Ta ${mineForTa} 件 · Ta给我 ${taForMe} 件</div>
-      </div>
-      <div class="card wb-entry-card${noteUnread ? ' ta99-pulse' : ''}" onclick="App.ta99Tab('notes')">
-        <div class="wb-ico">💌</div><div class="wb-name">小纸条</div><div class="wb-hint">${this.esc(notesSub)}</div>
-      </div>
-      <div class="card wb-entry-card" onclick="App.ta99Tab('wishes')">
-        <div class="wb-ico">🌠</div><div class="wb-name">心愿单</div><div class="wb-hint">${this.esc(wishesSub)}</div>
-      </div>
-      <div class="card wb-entry-card" onclick="App.ta99Tab('qa')">
-        <div class="wb-ico">💬</div><div class="wb-name">每日一问</div><div class="wb-hint">${this.esc(qaSub)}</div>
-      </div>
+      <div class="ta99-flow-hint">← 左右滑动 · 点中间的卡片进入 →</div>
     </div>
     <div style="text-align:center;margin:16px 0 4px"><button class="btn btn-ghost btn-sm" onclick="App.ta99Leave()">解除绑定</button></div>`;
+  },
+
+  // v12.9.49 封面流引擎：中心卡最大 · 两侧 rotateY 立体翘起 + 景深；拖动/点侧卡换位，点中卡进入
+  ta99FlowBind() {
+    const stage = document.getElementById('ta99FlowStage');
+    if (!stage || stage.__ta99FlowBound) return;
+    stage.__ta99FlowBound = true;
+    const covers = Array.from(stage.querySelectorAll('.ta99-cover'));
+    let center = 0;
+    const apply = () => {
+      covers.forEach((c, i) => {
+        const off = i - center;
+        const abs = Math.abs(off);
+        if (abs > 2) { c.style.opacity = '0'; c.style.pointerEvents = 'none'; c.style.transform = 'translateX(' + (off > 0 ? 130 : -130) + '%) rotateY(' + (-off * 34) + 'deg) scale(.7)'; return; }
+        c.style.opacity = abs === 0 ? '1' : (abs === 1 ? '.92' : '.66');
+        c.style.pointerEvents = '';
+        c.style.transform = 'translateX(' + (off * 52) + '%) rotateY(' + (-off * 34) + 'deg) translateZ(' + (-abs * 46) + 'px) scale(' + (1 - abs * 0.16) + ')';
+        c.classList.toggle('center', abs === 0);
+      });
+    };
+    apply();
+    stage.addEventListener('pointerdown', (e) => { stage.__x = e.clientX; stage.__moved = 0; });
+    stage.addEventListener('pointermove', (e) => {
+      if (stage.__x === undefined) return;
+      const dx = e.clientX - stage.__x;
+      stage.__moved = Math.max(stage.__moved || 0, Math.abs(dx));
+    });
+    stage.addEventListener('pointerup', (e) => {
+      if (stage.__x === undefined) return;
+      const dx = e.clientX - stage.__x;
+      stage.__x = undefined;
+      if (Math.abs(dx) > 42) {                       // 滑动换位
+        center = Math.max(0, Math.min(covers.length - 1, center + (dx < 0 ? 1 : -1)));
+        this._sfx99('liquid');
+        apply();
+      } else if ((stage.__moved || 0) < 8) {          // 点按：侧卡居中 / 中卡进入
+        const card = e.target.closest('.ta99-cover');
+        if (card) {
+          const i = +card.dataset.i;
+          if (i !== center) { center = i; this._sfx99('liquid'); apply(); }
+          else { this._sfx99('tap'); this.ta99Tab(card.dataset.k); }
+        }
+      }
+    });
   },
 
   // —— 子页：情侣签到 ——
@@ -811,15 +915,20 @@ select public.ta99_upgrade();`,
       extra.sign = extra.sign || {};
       extra.sign[Store.today()] = Object.assign({}, extra.sign[Store.today()] || {});
       extra.sign[Store.today()][myPos] = new Date().toISOString();
+      // v12.9.49 甜蜜值：情侣签到 +2（双方共享）
+      extra.sweet = (+extra.sweet || 0) + 2;
     });
     const s = ((this._ta99.row || {}).extra || {}).sign || {};
     const cur = s[Store.today()] || {};
-    this._flash(cur.a && cur.b ? '💞 今天你们连心啦！' : '已签到——等Ta也签到后，今天就连心了');
+    this._flash(cur.a && cur.b ? '💞 今天你们连心啦！（甜蜜值 +2）' : '已签到——等Ta也签到后，今天就连心了（甜蜜值 +2）');
   },
 
-  // —— 子页：Ta的近况 / 我的近况 ——
+  // —— 子页：Ta的近况 / 我的近况（v12.9.68 双板块：此时此刻 | 日常近况）——
   _ta99MomentsView(row, myPos) {
     const which = this._ta99.moments === 'me' ? 'me' : 'ta';
+    // 【此时此刻】仅安卓原生客户端可用（iOS/网页隐藏该 tab，其余互通数据不受影响）
+    const lkOn = !!(this._lk99On && this._lk99On());
+    const lkTab = lkOn && this._ta99.momentsLk === 'now' ? 'now' : 'daily';
     const myShare = myPos === 'a' ? row.share_a : row.share_b;
     const taShare = myPos === 'a' ? row.share_b : row.share_a;
     return `
@@ -830,9 +939,23 @@ select public.ta99_upgrade();`,
         <button class="ta99-chip ${which === 'ta' ? 'on' : ''}" onclick="App.ta99Moments('ta')">Ta的近况</button>
         <button class="ta99-chip ${which === 'me' ? 'on' : ''}" onclick="App.ta99Moments('me')">我的近况</button>
       </div>
-      <div style="font-size:11.5px;color:#94a3b8;line-height:1.7;margin-top:6px">打卡近 7 日 · 经济本月 · 医疗摘要——只共享克制的数据近况，明细留在各自的手机里。</div>
+      ${lkOn ? `
+      <div class="ta99-chips lk99-tabs" style="margin-top:8px">
+        <button class="ta99-chip ${lkTab === 'now' ? 'on' : ''}" onclick="App.ta99MomentsTab('now')">🫧 此时此刻</button>
+        <button class="ta99-chip ${lkTab === 'daily' ? 'on' : ''}" onclick="App.ta99MomentsTab('daily')">🌿 日常近况</button>
+      </div>` : ''}
+      <div style="font-size:11.5px;color:#94a3b8;line-height:1.7;margin-top:6px">${lkTab === 'now'
+        ? '设备实时状态同步（安卓）——App 使用 · 位置 · 充电 · 通话 · 夜间亮屏，双方知情授权后互见'
+        : '打卡近 7 日 · 经济本月 · 医疗摘要——只共享克制的数据近况，明细留在各自的手机里。'}</div>
     </div>
-    ${this._ta99ShareHtml(which === 'ta' ? taShare : myShare, which === 'ta')}`;
+    ${lkTab === 'now'
+      ? (this._lk99View ? this._lk99View(row, myPos) : '')
+      : this._ta99ShareHtml(which === 'ta' ? taShare : myShare, which === 'ta')}`;
+  },
+  // v12.9.68 近况双板块切换（此时此刻 / 日常近况）
+  ta99MomentsTab(k) {
+    this._ta99.momentsLk = k === 'now' ? 'now' : 'daily';
+    this._ta99Rerender();
   },
   _ta99ShareHtml(snap, isTa) {
     if (!snap || !snap.ts) {
@@ -874,7 +997,7 @@ select public.ta99_upgrade();`,
       ${(m.recent || []).length ? `<div style="margin-top:8px">${m.recent.map(x => `
         <div class="ta99-item"><span class="ta99-item-tx">${x.d} · ${this.esc(x.disease || '')}<span class="ta99-tag ${x.type === 'chronic' ? 'chr' : (x.type === 'visit' ? 'vis' : 'acu')}">${TYP[x.type] || '记录'}</span></span></div>`).join('')}</div>`
         : `<div class="ta99-share-note">暂无（可共享的）医疗记录</div>`}
-      <div class="ta99-share-note">🔒 HIV / HPV / TP 等健康隐私记录不参与共享，仍锁在各自的密码箱里</div>
+      <div class="ta99-share-note">🔒 ${this._isAuthorizedAccount && this._isAuthorizedAccount() ? 'HIV / HPV / TP 等健康隐私记录不参与共享，仍锁在各自的密码箱里' : '涉及个人健康的隐私记录不参与共享，仍锁在各自的密码箱里'}</div>
     </div>
     <div class="ta99-share-time">${who}更新于 ${new Date(snap.ts).toLocaleString('zh-CN')}</div>`;
     return s;
@@ -908,9 +1031,11 @@ select public.ta99_upgrade();`,
       <div class="card-title"><span class="ico">📅</span>你们的日子（${annis.length}）</div>
       ${annis.length ? annis.map(a => {
         const nd = this._ta99NextDays(a.d);
+        const escapedN = (a.n || '').replace(/'/g, "\\'");
         return `<div class="ta99-item">
           <span class="ta99-item-tx"><b>${this.esc(a.n || '')}</b><span style="color:#94a3b8"> · ${this.esc(a.d || '')}</span></span>
           <span class="ta99-item-side">${nd === 0 ? '<b style="color:#e11d48">就是今天 🎉</b>' : `还差 <b style="color:#e11d48">${nd}</b> 天`}</span>
+          <button class="ta99-edit" title="修改" onclick="App.ta99EditAnni('${a.id}', '${escapedN}', '${a.d}')">✎</button>
           <button class="ta99-x" title="删除" onclick="App.ta99DelAnni('${a.id}')">×</button>
         </div>`;
       }).join('') : '<div class="empty">还没有纪念日——第一次见面、第一次旅行…都值得记下来</div>'}
@@ -952,6 +1077,34 @@ select public.ta99_upgrade();`,
     await this._ta99Mutate(extra => {
       extra.anni = (extra.anni || []).filter(a => a.id !== id);
     });
+  },
+  // —— v12.9.69 纪念日编辑（修复缺少修改按钮的bug）——
+  ta99EditAnni(id, n, d) {
+    this._modal('📝 修改纪念日', `
+      <div style="font-size:12.5px;color:#475569;line-height:2">改个名字、换个日期：</div>
+      <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
+        <input id="ta99-anni-edit-n" class="input" style="flex:1;min-width:140px" maxlength="20" placeholder="名字" value="${this.esc(n || '')}">
+        <input id="ta99-anni-edit-d" type="date" class="input" style="width:auto" value="${this.esc(d || '')}">
+      </div>`, [
+      {
+        label: '保存修改', primary: true, onClick: () => {
+          const nn = (((document.getElementById('ta99-anni-edit-n') || {}).value) || '').trim();
+          const dd = (((document.getElementById('ta99-anni-edit-d') || {}).value) || '').trim();
+          if (!nn) { this._flash('❌ 名字不能为空'); return false; }
+          if (!/^\d{4}-\d{2}-\d{2}$/.test(dd)) { this._flash('❌ 选一个日期'); return false; }
+          (async () => {
+            await this._ta99Mutate(extra => {
+              const list = extra.anni = Array.isArray(extra.anni) ? extra.anni : [];
+              const it = list.find(a => a.id === id);
+              if (it) { it.n = nn.slice(0, 20); it.d = dd; }
+            });
+            this._flash('✅ 已修改');
+          })();
+          return false;
+        }
+      },
+      { label: '取消' }
+    ]);
   },
 
   // —— 子页：互相设置打卡 ——
@@ -1221,5 +1374,508 @@ select public.ta99_upgrade();`,
       while (keys.length > 90) delete extra.qa[keys.shift()];
     });
     this._flash('💬 今天的答案已写下');
+  },
+});
+
+// ==================== v12.9.49 情侣空间 · 六大新功能 ====================
+// 约会邀请（AI 文案）/ 共同目标 / 情侣农场 / 回忆相册 / 双人足迹 / 专属装扮 + 甜蜜值
+// 全部存 couples99.extra（ta99_write 扩展位 · 无需任何新表），双方 45 秒轻轮询互见
+Object.assign(App, {
+
+  // ===== 甜蜜值（签到 +2 · 约会应答 +10 · 目标完成 +15 · 农场收获 +5，双方共享）=====
+  TA99_SWEET_RULE: '签到 +2 · 约会赴约 +10 · 完成共同目标 +15 · 农场收获 +5 · 每日一问双方作答 +3',
+  async _ta99SweetAdd(n, why) {
+    await this._ta99Mutate((extra) => {
+      extra.sweet = (+extra.sweet || 0) + (n || 0);
+    });
+    if (why) this._flash('💕 甜蜜值 +' + n + '（' + why + '）');
+  },
+
+  // ==================== 💘 约会邀请（AI 文案生成 + 三种回应）====================
+  TA99_DATE_TYPES: ['吃饭', '看电影', '逛街', '旅行', '宅家', '看海', '展览', '咖啡'],
+  TA99_DATE_TIMES: ['今天晚上', '明天下午', '周末全天', '下周都可以', '今晚就有空'],
+  TA99_DATE_PLACES: ['咖啡馆', '那家餐厅', '电影院', '公园', '海边', '展览馆', '家里沙发', '老地方'],
+  TA99_DATE_ANS: [
+    { k: 'yes', n: '必须答应！', ico: '💖' },
+    { k: 'yes', n: '等你好久了', ico: '🥰' },
+    { k: 'wait', n: '让我先看看时间', ico: '🤔' },
+  ],
+  _ta99DatesView(row, myPos) {
+    const dates = Array.isArray(row.extra.dates) ? row.extra.dates : [];
+    const pend = dates.filter(x => x.st === 'pending' && x.by !== myPos);
+    const mine = dates.filter(x => x.by === myPos);
+    const got = dates.filter(x => x.by !== myPos);
+    return `
+    <div class="card">
+      <div class="card-title"><span class="ico">💘</span>AI 约会邀请
+        <button class="btn btn-ghost btn-sm" style="margin-left:auto" onclick="App.ta99Tab('home')">← 返回</button></div>
+      <div style="font-size:12px;color:var(--text-soft);line-height:1.8">选类型 / 时间 / 地点 → AI 写一张浪漫邀请卡（可自己改文案）→ 发给Ta。Ta可以「必须答应！」「等你好久了」或「让我先看看时间」——回应同步你们俩。</div>
+      <button class="btn btn-primary" style="background:linear-gradient(90deg,#e11d48,#fb7185);border:0;margin-top:10px" onclick="App.ta99DateNew()">✍️ 写一张邀请卡</button>
+    </div>
+    ${pend.length ? `<div class="card" style="border:2px solid #fda4af;background:linear-gradient(180deg,#fff1f2,#fff)">
+      <div class="card-title"><span class="ico">💌</span>Ta 约你（待回应）</div>
+      ${pend.map(x => `
+        <div class="ta99-date-card">
+          <div class="ta99-date-txt">“${this.esc(x.text)}”</div>
+          <div class="ta99-date-meta">${this.esc(x.type)} · ${this.esc(x.time)} · ${this.esc(x.place)} · 来自Ta</div>
+          <div class="ta99-date-acts">
+            ${this.TA99_DATE_ANS.map(a => `<button type="button" class="btn btn-sm${a.k === 'yes' ? ' btn-primary' : ' btn-ghost'}" onclick="App.ta99DateAnswer('${x.id}','${a.n.replace(/'/g, '')}')">${a.ico} ${a.n}</button>`).join('')}
+          </div>
+        </div>`).join('')}
+    </div>` : ''}
+    ${got.length ? `<div class="card" style="margin-top:14px"><div class="card-title"><span class="ico">📥</span>Ta 发过的邀请</div>
+      ${got.map(x => this._ta99DateRow(x, false)).join('')}</div>` : ''}
+    ${mine.length ? `<div class="card" style="margin-top:14px"><div class="card-title"><span class="ico">📤</span>我发起的邀请</div>
+      ${mine.map(x => this._ta99DateRow(x, true)).join('')}</div>` : ''}`;
+  },
+  _ta99DateRow(x, isMine) {
+    const st = x.st === 'pending' ? '<span class="cs99-st st-idle">⏳ 等Ta回应</span>'
+      : (x.st === 'yes' ? '<span class="cs99-st st-use">💖 已答应</span>' : '<span class="cs99-st st-sold">🤔 Ta再看看时间</span>');
+    return `<div class="ta99-date-card ${x.by !== undefined ? '' : ''}">
+      <div class="ta99-date-txt">“${this.esc(x.text)}”</div>
+      <div class="ta99-date-meta">${this.esc(x.type)} · ${this.esc(x.time)} · ${this.esc(x.place)}${x.ans ? ' · Ta回应：' + this.esc(x.ans) : ''} ${st}
+        ${isMine ? `<a href="javascript:void(0)" style="font-size:11.5px;color:#94a3b8;margin-left:8px" onclick="App.ta99DateDel('${x.id}')">删除</a>` : ''}</div>
+    </div>`;
+  },
+  ta99DateNew() {
+    const sel = (id, arr) => `<div class="cs99-sel-cats" id="${id}">${arr.map((v, i) => `<button type="button" class="cs99-sel-cat${i === 0 ? ' on' : ''}" data-v="${v}">${v}</button>`).join('')}</div>`;
+    this._modal('💘 写一张约会邀请卡', `
+      <div class="cs99-form">
+        <div class="cs99-f-row"><label>① 约会类型</label>${sel('d99-type', this.TA99_DATE_TYPES)}</div>
+        <div class="cs99-f-row"><label>② 时间</label>${sel('d99-time', this.TA99_DATE_TIMES)}</div>
+        <div class="cs99-f-row"><label>③ 地点</label>${sel('d99-place', this.TA99_DATE_PLACES)}</div>
+        <div class="cs99-f-row"><label>④ 邀请文案（AI 会先写一版，可以自己改）</label>
+          <textarea id="d99-text" maxlength="120" style="width:100%;min-height:70px;border-radius:10px;border:1px solid #cbd5e1;padding:8px;font-size:13px" placeholder="点下方「让AI写」生成，或直接自己写"></textarea>
+        </div>
+      </div>`,
+      [
+        { label: '✨ 让AI写一版', keep: true, onClick: async () => {
+            const g = (id) => { const b = document.querySelector('#' + id + ' .cs99-sel-cat.on'); return b ? b.dataset.v : ''; };
+            const t = document.getElementById('d99-text');
+            t.value = '（阿福正在帮你写…）';
+            t.value = await this._ta99DateGen(g('d99-type'), g('d99-time'), g('d99-place'));
+            return false;   // keep 弹窗开着
+          } },
+        { label: '💘 发送给Ta', primary: true, onClick: async () => {
+            const g = (id) => { const b = document.querySelector('#' + id + ' .cs99-sel-cat.on'); return b ? b.dataset.v : ''; };
+            const text = (document.getElementById('d99-text').value || '').trim();
+            if (!text) { this._flash('❌ 先写点文案（或点「让AI写一版」）'); return false; }
+            await this._ta99Mutate((extra, myPos) => {
+              extra.dates = Array.isArray(extra.dates) ? extra.dates : [];
+              extra.dates.unshift({ id: 'd' + Date.now().toString(36), type: g('d99-type'), time: g('d99-time'), place: g('d99-place'), text: text.slice(0, 120), by: myPos, st: 'pending', ans: '', ts: Date.now() });
+              if (extra.dates.length > 40) extra.dates.length = 40;
+            });
+            this._flash('💘 邀请卡已送达——Ta下次打开就能看到');
+            if (this._notify99SystemPush) this._notify99SystemPush('ta99', '约会邀请', '有人给你准备了一个小Moment，快去【Ta】看看 💌', 'ta99');
+            this.ta99Tab('dates');
+          } },
+        { label: '取消' },
+      ]);
+    setTimeout(() => {
+      ['d99-type', 'd99-time', 'd99-place'].forEach(id => {
+        const box = document.getElementById(id);
+        if (box) box.querySelectorAll('.cs99-sel-cat').forEach(b => b.addEventListener('click', () => {
+          box.querySelectorAll('.cs99-sel-cat').forEach(x => x.classList.remove('on'));
+          b.classList.add('on');
+        }));
+      });
+    }, 50);
+  },
+  // AI 文案：配置过阿福 AI 用 LLM；没配置走本地模板（永远可用）
+  async _ta99DateGen(type, time, place) {
+    try {
+      const st = this._afuAIState ? this._afuAIState() : { ok: false };
+      if (st.ok) {
+        const cfg = st.cfg;
+        const isWorker = cfg.mode === 'worker';
+        const headers = { 'Content-Type': 'application/json' };
+        if (!isWorker) headers['Authorization'] = 'Bearer ' + cfg.key;
+        const url = isWorker ? this._afuAIEndpoint(cfg) : cfg.base.replace(/\/+$/, '') + '/chat/completions';
+        const sys = '你是「一人行」App 的约会邀请文案师。写一句浪漫、真诚、克制的中文约会邀请（30-60字），用第一人称「我」对「宝贝」说，必须自然提到约会类型、时间与地点，甜而不腻，结尾像在等一个回答。只输出邀请正文，不要引号不要解释。';
+        const res = await fetch(url, {
+          method: 'POST', headers,
+          body: JSON.stringify({
+            model: isWorker ? 'glm-4-flash' : (cfg.model || 'deepseek-chat'),
+            messages: [{ role: 'system', content: sys }, { role: 'user', content: `约会类型：${type}；时间：${time}；地点：${place}` }],
+            temperature: 0.8, max_tokens: 120,
+          }),
+        });
+        const j = await res.json().catch(() => ({}));
+        const reply = (j && j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content) || '';
+        if (reply) return reply.trim().slice(0, 120);
+      }
+    } catch (e) {}
+    // 本地模板兜底（阿福 AI 未配置也能用）
+    const T = [
+      `致我的宝贝：我已经紧张到写了个专属邀请卡——${time}，想认真约你去${place}${type === '吃饭' ? '吃一顿好吃的' : type}。你愿意来吗？`,
+      `有人给你准备了一个小Moment，${time}想约你去${place}${type}，你愿意来吗？`,
+      `宝贝，${time}的${place}，缺一个你。${type}计划已就位，就差你点头。`,
+      `想约你${type}这件事想了很久——${time}，${place}，不见不散好吗？`,
+    ];
+    return T[Math.floor(Math.random() * T.length)];
+  },
+  async ta99DateAnswer(id, ans) {
+    const yes = ans.indexOf('必须') !== -1 || ans.indexOf('等你好久') !== -1;
+    await this._ta99Mutate((extra) => {
+      const d = (extra.dates || []).find(x => x.id === id);
+      if (d) { d.st = yes ? 'yes' : 'wait'; d.ans = ans; d.ansTs = Date.now(); }
+    });
+    if (yes) {
+      await this._ta99SweetAdd(10, '赴约邀请');
+      this._flash('💖 已答应——记得赴约呀（甜蜜值 +10，双方都有）');
+    } else {
+      this._flash('🤔 已回应「' + ans + '」——Ta会看到的');
+    }
+    this.ta99Tab('dates');
+  },
+  async ta99DateDel(id) {
+    await this._ta99Mutate((extra) => { extra.dates = (extra.dates || []).filter(x => x.id !== id); });
+    this._flash('🗑️ 邀请卡已删除');
+    this.ta99Tab('dates');
+  },
+
+  // ==================== 🏆 共同目标（双方共更进度 · 完成解锁徽章双份奖励）====================
+  _ta99GoalsView(row, myPos) {
+    const goals = Array.isArray(row.extra.goals) ? row.extra.goals : [];
+    const badges = Array.isArray(row.extra.badges) ? row.extra.badges : [];
+    return `
+    <div class="card">
+      <div class="card-title"><span class="ico">🏆</span>共同目标
+        <button class="btn btn-ghost btn-sm" style="margin-left:auto" onclick="App.ta99Tab('home')">← 返回</button></div>
+      <div style="font-size:12px;color:var(--text-soft);line-height:1.8">一起攒钱旅行 / 一起减肥 / 一起学做饭——双方都能更新进度，进度条实时共享；完成解锁<b>情侣徽章</b> + 宝石奖励（双方各一份）。</div>
+      <button class="btn btn-primary" style="background:linear-gradient(90deg,#e11d48,#fb7185);border:0;margin-top:10px" onclick="App.ta99GoalAdd()">🎯 创建共同目标</button>
+      ${badges.length ? `<div style="margin-top:12px;font-size:12px;color:#92400e">🏅 已解锁徽章：${badges.map(b => this.esc(b)).join(' · ')}</div>` : ''}
+    </div>
+    ${goals.length ? goals.map(g => {
+      const pct = Math.min(100, Math.round((g.cur || 0) / Math.max(1, g.target || 1) * 100));
+      return `<div class="card" style="margin-top:14px${g.done ? ';opacity:.72' : ''}">
+        <div class="card-title"><span class="ico">${g.done ? '🏅' : '🎯'}</span>${this.esc(g.title)}
+          ${g.done ? '<span class="cs99-st st-use">已完成</span>' : ''}
+          <a href="javascript:void(0)" style="font-size:11.5px;color:#94a3b8;margin-left:8px" onclick="App.ta99GoalDel('${g.id}')">删除</a></div>
+        <div class="cs99-bar" style="margin-top:8px"><i style="width:${pct}%;background:linear-gradient(90deg,#f472b6,#fb7185)"></i></div>
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-top:8px">
+          <span style="font-size:13px"><b>${g.cur || 0}</b> / ${g.target || 0} ${this.esc(g.unit || '')}</span>
+          ${g.done ? '' : `<span>
+            <button type="button" class="btn btn-sm btn-ghost" onclick="App.ta99GoalUpd('${g.id}',1)">+1</button>
+            <button type="button" class="btn btn-sm btn-ghost" onclick="App.ta99GoalUpd('${g.id}',5)">+5</button>
+            <button type="button" class="btn btn-sm btn-primary" onclick="App.ta99GoalDone('${g.id}')">完成 🏅</button>
+          </span>`}
+        </div>
+      </div>`;
+    }).join('') : '<div class="empty" style="margin:18px 0">还没有共同目标——创建第一个吧</div>'}`;
+  },
+  ta99GoalAdd() {
+    this._modal('🎯 创建共同目标', `
+      <div class="cs99-form">
+        <div class="cs99-f-row"><label>目标（如：一起攒钱去海边旅行）</label><input id="g99-title" type="text" maxlength="24" placeholder="你们想一起完成的事"></div>
+        <div class="cs99-f-2col">
+          <div class="cs99-f-row"><label>总量（数字）</label><input id="g99-target" type="number" inputmode="numeric" min="1" value="100"></div>
+          <div class="cs99-f-row"><label>单位</label><input id="g99-unit" type="text" maxlength="6" placeholder="元 / 次 / 公斤"></div>
+        </div>
+      </div>`,
+      [{ label: '创建', primary: true, onClick: async () => {
+          const title = (document.getElementById('g99-title').value || '').trim();
+          const target = Math.max(1, +document.getElementById('g99-target').value || 1);
+          const unit = (document.getElementById('g99-unit').value || '').trim();
+          if (!title) { this._flash('❌ 先写下目标'); return false; }
+          await this._ta99Mutate((extra, myPos) => {
+            extra.goals = Array.isArray(extra.goals) ? extra.goals : [];
+            extra.goals.unshift({ id: 'g' + Date.now().toString(36), title: title.slice(0, 24), target, unit, cur: 0, by: myPos, done: false, ts: Date.now() });
+          });
+          this._flash('🎯 共同目标已创建——喊Ta一起来更新进度');
+          this.ta99Tab('goals');
+        } }, { label: '取消' }]);
+  },
+  async ta99GoalUpd(id, n) {
+    await this._ta99Mutate((extra) => {
+      const g = (extra.goals || []).find(x => x.id === id);
+      if (g && !g.done) g.cur = Math.max(0, (g.cur || 0) + n);
+    });
+    this._sfx99('tap');
+    this.ta99Tab('goals');
+  },
+  async ta99GoalDone(id) {
+    let title = '';
+    await this._ta99Mutate((extra) => {
+      const g = (extra.goals || []).find(x => x.id === id);
+      if (g && !g.done) { g.done = true; g.doneAt = Date.now(); title = g.title; extra.badges = Array.isArray(extra.badges) ? extra.badges : []; extra.badges.push('🏆 ' + title); }
+    });
+    if (title) {
+      await this._ta99SweetAdd(15, '完成共同目标');
+      try {
+        if (!this._dev99) {
+          const r = this._rpg99Data(); r.exp += 3; this._rpg99Save(r);
+          if (this._pet99Data) { const p = this._pet99Data(); p.points += 2; this._pet99Save(p); }
+        }
+      } catch (e) {}
+      this._flash('🏅 目标完成——情侣徽章解锁 · 经验 +3 · 宝石 +2（Ta那边打开也会领到Ta的一份）· 甜蜜值 +15');
+      if (this._notify99SystemPush) this._notify99SystemPush('ta99', '共同目标达成', '你们一起完成了「' + title + '」🎉', 'ta99');
+    }
+    this.ta99Tab('goals');
+  },
+  async ta99GoalDel(id) {
+    await this._ta99Mutate((extra) => { extra.goals = (extra.goals || []).filter(x => x.id !== id); });
+    this._flash('🗑️ 目标已删除');
+    this.ta99Tab('goals');
+  },
+
+  // ==================== 🌾 情侣农场（同耕一块地 · 双方各浇一次算一天 · 收获双份奖励）====================
+  TA99_CROPS: [
+    { k: 'sunflower', n: '向日葵', ico: '🌻', days: 3 },
+    { k: 'strawberry', n: '草莓', ico: '🍓', days: 2 },
+    { k: 'carrot', n: '胡萝卜', ico: '🥕', days: 2 },
+    { k: 'tomato', n: '番茄', ico: '🍅', days: 3 },
+    { k: 'tulip', n: '郁金香', ico: '🌷', days: 4 },
+  ],
+  _ta99FarmDays(p) {   // 已完成生长天数：双方都在同一天浇过水才算一天
+    const days = p.water || {};
+    let n = 0;
+    for (const dk in days) if (days[dk] && days[dk].a && days[dk].b) n++;
+    return n;
+  },
+  _ta99FarmReady(p) {
+    const crop = this.TA99_CROPS.find(c => c.k === p.crop);
+    return crop ? this._ta99FarmDays(p) >= crop.days : false;
+  },
+  _ta99FarmView(row, myPos) {
+    const farm = row.extra.farm || {};
+    const plots = Array.isArray(farm.plots) ? farm.plots : [null, null, null, null];
+    return `
+    <div class="card">
+      <div class="card-title"><span class="ico">🌾</span>情侣农场
+        <button class="btn btn-ghost btn-sm" style="margin-left:auto" onclick="App.ta99Tab('home')">← 返回</button></div>
+      <div style="font-size:12px;color:var(--text-soft);line-height:1.8">同一块地，两个人一起种：一方播种 → 双方每天各浇一次水（都浇了才算一天）→ 成熟收获 <b>+5 甜蜜值 + 双方各一份宝石</b>。轮作越勤，农场越旺。</div>
+    </div>
+    <div class="ta99-farm-grid">
+      ${plots.map((p, i) => {
+        if (!p || !p.crop) return `<div class="ta99-plot empty" onclick="App.ta99FarmPlant(${i})"><span>➕</span><small>开垦播种</small></div>`;
+        const crop = this.TA99_CROPS.find(c => c.k === p.crop) || { ico: '🌱', n: '作物', days: 3 };
+        const days = this._ta99FarmDays(p);
+        const ready = this._ta99FarmReady(p);
+        const watered = (p.water || {})[Store.today()] || {};
+        const meW = !!watered[myPos], taW = !!watered[myPos === 'a' ? 'b' : 'a'];
+        return `<div class="ta99-plot ${ready ? 'ready' : ''} ${p.done ? 'done' : ''}">
+          <div class="ta99-plot-ico">${p.done ? '🧺' : (ready ? crop.ico : '🌱')}</div>
+          <div class="ta99-plot-n">${crop.n} · ${days}/${crop.days} 天</div>
+          <div class="ta99-plot-water">今天浇水：${meW ? '✅我' : '⬜我'} ${taW ? '✅Ta' : '⬜Ta'}</div>
+          ${p.done ? `<div class="ta99-plot-sub">已收获归仓</div>` : (ready
+            ? `<button type="button" class="btn btn-sm btn-primary" onclick="App.ta99FarmHarvest(${i})">🌾 收获</button>`
+            : `<button type="button" class="btn btn-sm btn-ghost" onclick="App.ta99FarmWater(${i})">💧 浇水</button>`)}
+        </div>`;
+      }).join('')}
+    </div>
+    <div style="font-size:11.5px;color:#94a3b8;text-align:center;margin-top:10px">农场数据双方共享（云端 extra）· 收获时对方也会收到通知领奖励</div>`;
+  },
+  ta99FarmPlant(i) {
+    this._modal('🌱 播种', `
+      <div class="cs99-sel-cats" id="f99-crops">${this.TA99_CROPS.map((c, j) => `<button type="button" class="cs99-sel-cat${j === 0 ? ' on' : ''}" data-k="${c.k}">${c.ico} ${c.n} · ${c.days}天</button>`).join('')}</div>`,
+      [{ label: '播种', primary: true, onClick: async () => {
+          const b = document.querySelector('#f99-crops .cs99-sel-cat.on');
+          if (!b) return false;
+          await this._ta99Mutate((extra) => {
+            extra.farm = extra.farm || {};
+            const plots = extra.farm.plots = Array.isArray(extra.farm.plots) ? extra.farm.plots : [null, null, null, null];
+            plots[i] = { crop: b.dataset.k, plantedAt: Date.now(), water: {}, done: false };
+          });
+          this._flash('🌱 种下去了——记得每天来浇水');
+          this.ta99Tab('farm');
+        } }, { label: '取消' }]);
+    setTimeout(() => {
+      const box = document.getElementById('f99-crops');
+      if (box) box.querySelectorAll('.cs99-sel-cat').forEach(b => b.addEventListener('click', () => {
+        box.querySelectorAll('.cs99-sel-cat').forEach(x => x.classList.remove('on'));
+        b.classList.add('on');
+      }));
+    }, 50);
+  },
+  async ta99FarmWater(i) {
+    let dup = false, taW = false;
+    await this._ta99Mutate((extra, myPos) => {
+      extra.farm = extra.farm || {};
+      const plots = extra.farm.plots = Array.isArray(extra.farm.plots) ? extra.farm.plots : [null, null, null, null];
+      const p = plots[i];
+      if (!p || p.done) return;
+      p.water = p.water || {};
+      const today = p.water[Store.today()] = p.water[Store.today()] || { a: 0, b: 0 };
+      if (today[myPos]) { dup = true; return; }
+      today[myPos] = 1;
+      taW = !!today[myPos === 'a' ? 'b' : 'a'];
+    });
+    if (dup) { this._flash('💧 你今天浇过啦——等Ta也来浇一次，就长一天'); return; }
+    this._sfx99('liquid');
+    this._flash(taW ? '💧 你们今天都浇过了——作物长了一天！' : '💧 浇好了——Ta今天也浇一次才算一天哦');
+    this.ta99Tab('farm');
+  },
+  async ta99FarmHarvest(i) {
+    let cropN = '';
+    await this._ta99Mutate((extra) => {
+      extra.farm = extra.farm || {};
+      const plots = extra.farm.plots = Array.isArray(extra.farm.plots) ? extra.farm.plots : [null, null, null, null];
+      const p = plots[i];
+      if (p && !p.done) { p.done = true; p.doneAt = Date.now(); cropN = (this.TA99_CROPS.find(c => c.k === p.crop) || {}).n || '作物'; }
+    });
+    if (cropN) {
+      await this._ta99SweetAdd(5, '农场收获');
+      try {
+        if (!this._dev99) {
+          const r = this._rpg99Data(); r.exp += 2; this._rpg99Save(r);
+          if (this._pet99Data) { const p = this._pet99Data(); p.points += 1; this._pet99Save(p); }
+        }
+      } catch (e) {}
+      this._flash(`🌾 收获了「${cropN}」——甜蜜值 +5 · 经验 +2 · 宝石 +1（Ta打开农场也会领到Ta的一份）`);
+      if (this._notify99SystemPush) this._notify99SystemPush('ta99', '农场收获', '你们的' + cropN + '成熟收获啦 🌾', 'ta99');
+    }
+    this.ta99Tab('farm');
+  },
+
+  // ==================== 📷 回忆相册（共同上传 · 时间线 · 纪念日识别）====================
+  _ta99AlbumView(row, myPos) {
+    const album = Array.isArray(row.extra.album) ? row.extra.album : [];
+    const annis = Array.isArray(row.extra.anni) ? row.extra.anni : [];
+    return `
+    <div class="card">
+      <div class="card-title"><span class="ico">📷</span>回忆相册
+        <button class="btn btn-ghost btn-sm" style="margin-left:auto" onclick="App.ta99Tab('home')">← 返回</button></div>
+      <div style="font-size:12px;color:var(--text-soft);line-height:1.8">共同上传照片，自动生成时间线；配一句当时的心情。纪念日临近时阿福会提醒你们翻翻这里（最多保留 24 张，云端共享）。</div>
+      <label class="btn btn-primary" style="display:inline-block;background:linear-gradient(90deg,#e11d48,#fb7185);border:0;margin-top:10px">
+        📤 上传一张回忆<input type="file" accept="image/*" style="display:none" onchange="App.ta99AlbumUpload(this)">
+      </label>
+      ${annis.length ? `<div style="margin-top:10px;font-size:12px;color:#92400e">🎂 纪念日：${annis.map(a => this.esc(a.n || a.d)).join(' · ')}</div>` : ''}
+    </div>
+    ${album.length ? album.map(p => `
+      <div class="ta99-photo-card">
+        <img src="${p.img}" alt="回忆" onclick="this.classList.toggle('zoom')">
+        <div class="ta99-photo-meta">
+          <span>${new Date(p.ts).toISOString().slice(0, 10)} · ${p.by === myPos ? '我上传' : 'Ta上传'}</span>
+          ${p.note ? `<em>${this.esc(p.note)}</em>` : ''}
+          <a href="javascript:void(0)" style="font-size:11px;color:#94a3b8" onclick="App.ta99AlbumDel('${p.id}')">删除</a>
+        </div>
+      </div>`).join('') : '<div class="empty" style="margin:18px 0">相册还是空的——上传第一张合照吧</div>'}`;
+  },
+  ta99AlbumUpload(input) {
+    const f = input && input.files && input.files[0];
+    if (!f) return;
+    const rd = new FileReader();
+    rd.onload = (e) => {
+      const img = new Image();
+      img.onload = async () => {
+        try {
+          // 压缩：480px JPEG 0.62（extra 云端共享 · 控制单张体积）
+          const cv = document.createElement('canvas');
+          const scale = Math.min(1, 480 / Math.max(img.width, img.height));
+          cv.width = Math.round(img.width * scale);
+          cv.height = Math.round(img.height * scale);
+          cv.getContext('2d').drawImage(img, 0, 0, cv.width, cv.height);
+          const data = cv.toDataURL('image/jpeg', 0.62);
+          if (data.length > 90000) { this._flash('⚠️ 这张图有点大，换一张或裁小一点再传'); return; }
+          this._modal('📝 这张回忆', `
+            <div style="text-align:center"><img src="${data}" style="max-width:100%;border-radius:12px"></div>
+            <input id="p99-note" type="text" maxlength="40" placeholder="配一句当时的心情（可选）" style="width:100%;margin-top:10px;border-radius:10px;border:1px solid #cbd5e1;padding:8px;font-size:13px">`,
+            [{ label: '存进相册', primary: true, onClick: async () => {
+                const note = (document.getElementById('p99-note').value || '').trim();
+                await this._ta99Mutate((extra, myPos) => {
+                  extra.album = Array.isArray(extra.album) ? extra.album : [];
+                  extra.album.unshift({ id: 'p' + Date.now().toString(36), img: data, note, by: myPos, ts: Date.now() });
+                  if (extra.album.length > 24) extra.album.length = 24;   // 云端克制：最多 24 张
+                });
+                this._flash('📷 回忆已存进你们的时间线');
+                if (this._notify99SystemPush) this._notify99SystemPush('ta99', '回忆相册', '对方往你们的相册里添了一张新回忆 📷', 'ta99');
+                this.ta99Tab('album');
+              } }, { label: '取消' }]);
+        } catch (err) { this._flash('⚠️ 这张图处理不了，换一张试试'); }
+      };
+      img.src = e.target.result;
+    };
+    rd.readAsDataURL(f);
+  },
+  async ta99AlbumDel(id) {
+    await this._ta99Mutate((extra) => { extra.album = (extra.album || []).filter(x => x.id !== id); });
+    this._flash('🗑️ 已删除');
+    this.ta99Tab('album');
+  },
+
+  // ==================== 👣 双人足迹（一起去过的地方 · 联动足迹点亮）====================
+  _ta99PlacesView(row, myPos) {
+    const places = Array.isArray(row.extra.places) ? row.extra.places : [];
+    return `
+    <div class="card">
+      <div class="card-title"><span class="ico">👣</span>双人足迹
+        <button class="btn btn-ghost btn-sm" style="margin-left:auto" onclick="App.ta99Tab('home')">← 返回</button></div>
+      <div style="font-size:12px;color:var(--text-soft);line-height:1.8">记录你们一起去过的地方——城市、街角、海边、小店都算。你自己的 34 省足迹点亮在【记录 → 足迹】，这里是「我们一起」的地图。</div>
+      <button class="btn btn-primary" style="background:linear-gradient(90deg,#e11d48,#fb7185);border:0;margin-top:10px" onclick="App.ta99PlaceAdd()">📍 记下这一站</button>
+      <button class="btn btn-ghost" style="margin-left:8px" onclick="App.gotoWb('footprints99')">🧭 看我的足迹点亮</button>
+    </div>
+    ${places.length ? places.map(p => `
+      <div class="cs99-item" style="margin-top:12px">
+        <span class="cs99-ico emoji">📍</span>
+        <div class="cs99-mid">
+          <div class="cs99-name">${this.esc(p.place)}</div>
+          <div class="cs99-sub">${p.date || ''} · ${p.by === myPos ? '我记的' : 'Ta记的'}${p.note ? ' · ' + this.esc(p.note) : ''}</div>
+        </div>
+        <div class="cs99-right"><div class="cs99-acts"><button type="button" class="btn btn-ghost btn-sm" onclick="App.ta99PlaceDel('${p.id}')">删除</button></div></div>
+      </div>`).join('') : '<div class="empty" style="margin:18px 0">还没有一起去过的地方——从第一站开始记吧</div>'}`;
+  },
+  ta99PlaceAdd() {
+    this._modal('📍 记下这一站', `
+      <div class="cs99-form">
+        <div class="cs99-f-row"><label>地方（城市 / 街角 / 海边 / 小店…）</label><input id="pl99-place" type="text" maxlength="20" placeholder="如：鼓浪屿"></div>
+        <div class="cs99-f-2col">
+          <div class="cs99-f-row"><label>日期</label><input id="pl99-date" type="date" value="${Store.today()}"></div>
+          <div class="cs99-f-row"><label>备注（可选）</label><input id="pl99-note" type="text" maxlength="30" placeholder="发生了什么"></div>
+        </div>
+      </div>`,
+      [{ label: '记下', primary: true, onClick: async () => {
+          const place = (document.getElementById('pl99-place').value || '').trim();
+          if (!place) { this._flash('❌ 地方不能为空'); return false; }
+          await this._ta99Mutate((extra, myPos) => {
+            extra.places = Array.isArray(extra.places) ? extra.places : [];
+            extra.places.unshift({ id: 'pl' + Date.now().toString(36), place: place.slice(0, 20), date: document.getElementById('pl99-date').value || Store.today(), note: (document.getElementById('pl99-note').value || '').trim(), by: myPos, ts: Date.now() });
+          });
+          this._flash('📍 足迹已记下——你们的地图又亮了一点');
+          this.ta99Tab('places');
+        } }, { label: '取消' }]);
+  },
+  async ta99PlaceDel(id) {
+    await this._ta99Mutate((extra) => { extra.places = (extra.places || []).filter(x => x.id !== id); });
+    this._flash('🗑️ 已删除');
+    this.ta99Tab('places');
+  },
+
+  // ==================== 👑 专属装扮（主页皮肤 + 情侣头像框 · 甜蜜值解锁）====================
+  TA99_THEMES: [
+    { k: 'pink', n: '粉爱心', need: 0, d: '默认 · 柔和粉爱心' },
+    { k: 'star', n: '星空', need: 150, d: '深蓝星夜 · 星星点缀' },
+    { k: 'pixel', n: '像素情侣', need: 300, d: '像素风 · 情侣色调' },
+  ],
+  _ta99DressView(row, myPos) {
+    const sweet = +row.extra.sweet || 0;
+    const dress = row.extra.dress || {};
+    const cur = dress.theme || 'pink';
+    return `
+    <div class="card">
+      <div class="card-title"><span class="ico">👑</span>专属装扮
+        <button class="btn btn-ghost btn-sm" style="margin-left:auto" onclick="App.ta99Tab('home')">← 返回</button></div>
+      <div style="font-size:12px;color:var(--text-soft);line-height:1.8">情侣空间主页皮肤 + 情侣头像框——绑定即解锁粉爱心，<b>甜蜜值</b>涨上去解锁更多（${this.TA99_SWEET_RULE}）。装扮对双方同时生效。</div>
+      <div class="cs99-sel-cats" style="margin-top:10px">
+        ${this.TA99_THEMES.map(t => {
+          const lock = sweet < t.need;
+          return `<button type="button" class="cs99-sel-cat${cur === t.k ? ' on' : ''}${lock ? ' lock' : ''}" ${lock ? `onclick="App._flash('🔒 甜蜜值 ${t.need} 解锁——签到/约会/目标/农场都涨甜蜜值')"` : `onclick="App.ta99DressSet('${t.k}')"`}>${lock ? '🔒 ' : ''}${t.n}${t.need ? ` · ${t.need}` : ''}</button>`;
+        }).join('')}
+      </div>
+    </div>
+    <div class="card" style="margin-top:14px">
+      <div class="card-title"><span class="ico">💕</span>甜蜜值 ${sweet} · Lv.${Math.floor(sweet / 100)}</div>
+      <div class="cs99-bar" style="margin-top:8px"><i style="width:${sweet % 100}%;background:linear-gradient(90deg,#f472b6,#fb7185)"></i></div>
+      <div style="font-size:12px;color:var(--text-soft);margin-top:8px;line-height:1.8">当前主题「${(this.TA99_THEMES.find(t => t.k === cur) || {}).n}」· 情侣头像框随绑定自动解锁 💞<br>${this.TA99_SWEET_RULE}</div>
+    </div>`;
+  },
+  async ta99DressSet(k) {
+    await this._ta99Mutate((extra) => {
+      extra.dress = extra.dress || {};
+      extra.dress.theme = k;
+    });
+    this._sfx99('success');
+    this._flash('👑 主题已更换——你们的专属风格');
+    this.ta99Tab('home');
   },
 });

@@ -152,9 +152,11 @@ Object.assign(App, {
 
     // —— 首次进入：设置密码 ——
     if (!hasPwd) {
+      // v12.9.50 账号级门控：健康隐私分区（HIV/HPV/TP）仅指定账号存在；其他账号不显示相关描述
+      const owner = this._isAuthorizedAccount && this._isAuthorizedAccount();
       return `<div class="card v99-hero">
         <div class="card-title"><span class="ico">🔐</span>密码箱 · 设置你的密码</div>
-        <div class="v99-hero-sub">这是你的<b>私人密码箱</b>：心事、账号备忘、任何不想被看见的文字，都可以锁进来。病历中有关 <b>HIV / HPV / TP</b> 的健康隐私记录也默认收在这里。<br><b>每个用户的密码都不同——请设置你自己的密码</b>（至少 4 位；从此这个密码也接管原健康隐私解锁，旧密码作废）。密码只存在本机，忘了就只能清空密码箱重来。</div>
+        <div class="v99-hero-sub">这是你的<b>私人密码箱</b>：心事、账号备忘、任何不想被看见的文字，都可以锁进来。${owner ? '病历中有关 <b>HIV / HPV / TP</b> 的健康隐私记录也默认收在这里。' : ''}<br><b>每个用户的密码都不同——请设置你自己的密码</b>（至少 4 位${owner ? '；从此这个密码也接管原健康隐私解锁，旧密码作废' : ''}）。密码只存在本机，忘了就只能清空密码箱重来。</div>
         <div class="ledger-form" style="margin-top:12px">
           <div class="field"><label>设置密码（≥4 位）</label><input type="password" class="input" id="v99Pwd1" placeholder="输入你想用的密码"></div>
           <div class="field"><label>再输入一次</label><input type="password" class="input" id="v99Pwd2" placeholder="再输一遍，确认没打错" onkeydown="if(event.key==='Enter')App.vault99Setup()"></div>
@@ -166,10 +168,11 @@ Object.assign(App, {
 
     // —— 已设密码 · 未解锁：锁屏 ——
     if (!unlocked) {
+      const owner = this._isAuthorizedAccount && this._isAuthorizedAccount();   // v12.9.50 非授权账号无健康隐私分区描述
       return `<div class="card v99-hero locked">
         <div class="card-title"><span class="ico">🔐</span>密码箱已上锁</div>
         <div class="v99-lock-ico">🔒</div>
-        <div class="v99-hero-sub">里面锁着你的秘密与健康隐私（解锁后 30 分钟内免输，关闭页面自动上锁）。</div>
+        <div class="v99-hero-sub">里面锁着你的秘密${owner ? '与健康隐私' : ''}（解锁后 30 分钟内免输，关闭页面自动上锁）。</div>
         <div class="ledger-form" style="margin-top:12px">
           <div class="field"><label>密码</label><input type="password" class="input" id="v99Pwd" placeholder="输入密码解锁" onkeydown="if(event.key==='Enter')App.vault99Unlock()"></div>
           <div class="btn-row"><button type="button" class="btn btn-primary" style="margin:0" onclick="App.vault99Unlock()">🔓 解锁</button></div>
@@ -179,15 +182,17 @@ Object.assign(App, {
     }
 
     // —— 已解锁：主界面 ——
+    // v12.9.50 账号级门控：健康隐私分区（HIV/HPV/TP）仅指定账号渲染；其他账号整块不存在
+    const owner = this._isAuthorizedAccount && this._isAuthorizedAccount();
     const o = this._vault99Data();
-    const sens = this._vault99SensRecords();
+    const sens = owner ? this._vault99SensRecords() : [];
     const sensByKind = { hiv: [], hpv: [], tp: [] };
     sens.forEach(r => {
       const key = (r.tags || []).find(t => ['hiv', 'hpv', 'tp'].includes(t)) || (this._healthSensMatch(r.disease + '') ? (/[hpv]/i.test(r.disease) ? 'hpv' : (/梅毒|tp/i.test(r.disease) ? 'tp' : 'hiv')) : null);
       if (key && sensByKind[key]) sensByKind[key].push(r);
     });
     const checkup = this._getCheckup ? this._getCheckup() : { name: '', date: '' };
-    const sensCheckup = this._healthSensMatch(checkup.name || '') ? checkup : null;
+    const sensCheckup = owner && this._healthSensMatch(checkup.name || '') ? checkup : null;
     const KIND = { hiv: { n: 'HIV', ico: '🛡️' }, hpv: { n: 'HPV', ico: '🌸' }, tp: { n: '梅毒TP', ico: '🔬' } };
 
     let html = `<div class="card v99-hero">
@@ -196,7 +201,7 @@ Object.assign(App, {
       </div>
       <div class="v99-stats">
         <span>🔐 秘密 <b>${o.secrets.length}</b> 条</span>
-        <span>🩺 健康隐私 <b>${sens.length}</b> 条</span>
+        ${owner ? `<span>🩺 健康隐私 <b>${sens.length}</b> 条</span>` : ''}
         ${sensCheckup ? '<span>📋 敏感复查项 <b>1</b> 项</span>' : ''}
       </div>
     </div>`;
@@ -224,7 +229,8 @@ Object.assign(App, {
       </div>`;
     });
 
-    // —— 健康隐私（自【就医数据】感染科迁入）——
+    // —— 健康隐私（自【就医数据】感染科迁入 · v12.9.50 仅授权账号渲染此分区）——
+    if (owner) {
     html += `<div class="section-label">🩺 健康隐私（自就医数据迁入 · ${sens.length} 条）</div>`;
     if (!sens.length && !sensCheckup) {
       html += `<div class="empty">暂无 HIV / HPV / TP 相关记录——【就医数据】里出现这类病历时，会自动收进这里（未解锁时谁也看不见）。</div>`;
@@ -246,6 +252,7 @@ Object.assign(App, {
         html += `<div class="v99-sens-kind">📋 敏感复查项</div>
         <div class="v99-sens-card"><div class="v99-item-head"><b>${this.esc(sensCheckup.name || '隐私复查项')}</b>${sensCheckup.date ? `<span class="v99-tag">复查 ${this.esc(sensCheckup.date)}</span>` : ''}</div></div>`;
       }
+    }
     }
 
     // —— 修改密码 ——

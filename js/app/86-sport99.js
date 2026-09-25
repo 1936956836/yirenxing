@@ -118,9 +118,9 @@ Object.assign(App, {
     return Store.fmtDate ? Store.fmtDate(d) : d.toISOString().slice(0, 10);
   },
   _sp99Home() {
-    const { s, latest, curW, curFat, targetW, wkW, wkS } = this._sp99Data();
-    const wkWMin = wkW.reduce((a, x) => a + (+x.durMin || 0), 0);
-    const wkSMin = wkS.reduce((a, x) => a + (+x.durMin || 0), 0);
+    const { s, latest, curW, curFat, targetW, wkW } = this._sp99Data();
+    // v12.9.51 第一卡片第 4 指标：本周学习 → BMI 指数（同步【主人档案】身高体重）
+    const bmi = Store.getBMI();
     const kpi = (n, v, u) => `<div class="sp99-kpi"><span class="sp99-kpi-n">${n}</span><b>${v}<i>${u}</i></b></div>`;
     const recentM = (s.measures || []).slice(0, 3);
     const recentW = (s.workouts || []).slice(0, 3);
@@ -134,7 +134,7 @@ Object.assign(App, {
           ${kpi('最新体重', curW ? this._f1(curW) : '0.0', '公斤')}
           ${kpi('体脂率', curFat ? this._f1(curFat) : '0.0', '%')}
           ${kpi('本周运动', wkW.length ? wkW.length + ' 次' : '0', '次')}
-          ${kpi('本周学习', wkSMin ? wkSMin + ' 分' : '0', '分')}
+          ${kpi('BMI 指数', bmi ? bmi.value.toFixed(1) : '—', bmi ? bmi.label : '待填档案')}
         </div>
       </div>
       <div class="sp99-navrow">

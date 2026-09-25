@@ -5,12 +5,15 @@
 //   · Boss 居于山谷：天色暗淡 + 电闪雷鸣 + 两眼冒红光不断咆哮（循环动画）
 //   · 像素战鼓音乐：148bpm 密集鼓点 + 低频持续轰鸣（Web Audio 全程序合成 · 离开页面即停）
 //   · Boss 属性极高且随战士等级自适应（系统参考难度）：完成月度任务每条 -10% 属性，3 条共 -30%
+//   · v12.9.51 击杀条件：至少完成 1 条讨伐任务才能开启挑战（山谷结界）；奖励公示：经验 +40 · 宝石 +36
 //   · 任务（学生画像 · 需长期坚持）：本月健身打卡 12 次 / 学习打卡 24 天 / 健身∪学习连续 10 天
 //   · 战斗（红白渐变战场 · 与独行信条统一）：攻击 / 重击(2.4倍·35%落空) / 防御(回复+减伤)
 //     —— 阶段机制：60%血 咆哮(攻击+15%) · 30%血 狂暴(再+30%·反击变密) + 汲能回血
 //     —— 不做任务硬闯≈必败；3 条任务全完成后胜率约五成上下（中概率，长期坚持才有胜机）
 Object.assign(App, {
   _boss99Key: 'one-xing-boss99-v1',
+  // v12.9.51 讨伐奖励公示（单一来源：页面公示卡 + 击杀结算共用，改这里两处同步）
+  _BOSS99_REWARD: { exp: 40, gems: 36 },
   _boss99Data() {
     try {
       const raw = localStorage.getItem(this._boss99Key);
@@ -281,6 +284,24 @@ Object.assign(App, {
         background:linear-gradient(90deg,#dc2626,#991b1b);border:2px solid #7f1d1d;border-radius:12px;
         box-shadow:0 6px 0 #5b1010,inset 0 1px 0 rgba(255,255,255,.25);transition:transform .12s ease,box-shadow .12s ease}
       .boss99-fight:active{transform:translateY(4px);box-shadow:0 2px 0 #5b1010,inset 0 1px 0 rgba(255,255,255,.25)}
+      .boss99-fight.locked{background:linear-gradient(90deg,#6b7280,#4b5563);border-color:#374151;cursor:not-allowed;
+        box-shadow:0 6px 0 #1f2937;letter-spacing:1px;filter:saturate(.4)}
+      .boss99-fight.locked:active{transform:none;box-shadow:0 6px 0 #1f2937}
+      .boss99-locknote{margin-top:9px;text-align:center;font-size:11px;font-weight:800;color:#b91c1c;line-height:1.7;
+        background:#fff;border:2px dashed #fca5a5;border-radius:11px;padding:8px 10px}
+      /* —— v12.9.51 讨伐奖励公示卡 —— */
+      .boss99-reward{margin:11px 0;border-radius:14px;padding:13px 14px;position:relative;overflow:hidden;
+        background:linear-gradient(135deg,#fffbeb 0%,#fef3c7 55%,#fde68a 100%);border:3px solid #b45309;
+        box-shadow:0 5px 0 rgba(120,53,15,.25),inset 0 1px 0 rgba(255,255,255,.7)}
+      .boss99-reward::after{content:'✦';position:absolute;right:10px;top:6px;color:#b45309;font-size:13px;opacity:.5}
+      .boss99-reward-t{font-size:13px;font-weight:900;color:#7c2d12;letter-spacing:1px;margin-bottom:9px}
+      .boss99-reward-row{display:flex;gap:9px}
+      .boss99-reward-cell{flex:1;background:rgba(255,255,255,.9);border:2px solid #d97706;border-radius:10px;
+        padding:8px 10px;display:flex;flex-direction:column;gap:2px}
+      .boss99-reward-cell b{font-size:18px;font-weight:900;color:#b45309;font-variant-numeric:tabular-nums}
+      .boss99-reward-cell.gem b{color:#92400e}
+      .boss99-reward-cell span{font-size:10px;font-weight:700;color:#92400e}
+      .boss99-reward-sub{margin-top:8px;font-size:10.5px;font-weight:700;color:#92400e;line-height:1.6}
       /* —— 对决战场（独行信条红白渐变 · 与 93-quit99.js 四魔对决同款 q99-bt 体系）—— */
       .q99-bt{position:relative;font-family:ui-monospace,'Courier New',monospace}
       .q99-bt-stage{position:relative;height:238px;overflow:hidden;border:3px solid #7f1d1d;
@@ -394,6 +415,9 @@ Object.assign(App, {
         <div class="boss99-task-bar"><i style="width:${Math.min(100, Math.round(t.prog / t.goal * 100))}%"></i></div>
         <div class="boss99-task-tip">${t.tip}　<b class="boss99-task-cut">完成即削它 10% 属性</b></div>
       </div>`;
+    // v12.9.51 击杀条件：至少完成 1 条讨伐任务才可开启挑战
+    const unlocked = st.wk >= 1;
+    const RW = this._BOSS99_REWARD;
     return `
     <div class="boss99-wrap">
       <div class="boss99-hud">
@@ -436,7 +460,18 @@ Object.assign(App, {
         <div class="boss99-tasks-t">📋 讨伐任务（每月 3 条 · 接通你的打卡数据自动结算）</div>
         ${tasks.map(taskRow).join('')}
         <div class="boss99-tasks-note">系统参考你的战士等级设计魔物强度：不做任务硬闯≈必败；每完成 1 条任务，魔物 HP/攻击/防御<b>各 -10%</b>（3 条共 -30%），届时才有一战之力——长期坚持，方有胜机。</div>
-        <button class="boss99-fight" onclick="App.boss99Battle()">⚔️ ${won ? '再战魔物' : '讨伐魔物'}</button>
+        <div class="boss99-reward">
+          <div class="boss99-reward-t">🏆 讨伐奖励 · 公示</div>
+          <div class="boss99-reward-row">
+            <span class="boss99-reward-cell"><b>⚔️ +${RW.exp}</b>独行信条 · 经验值</span>
+            <span class="boss99-reward-cell gem"><b>💎 +${RW.gems}</b>宝石（宠物商店通用）</span>
+          </div>
+          <div class="boss99-reward-sub">击杀 ${this.esc(def.n)} 即刻到账 · 每月首次击杀发放，同月再战无奖励</div>
+        </div>
+        <button class="boss99-fight${unlocked ? '' : ' locked'}" onclick="App.boss99Battle()">
+          ${unlocked ? `⚔️ ${won ? '再战魔物' : '讨伐魔物'}` : `🔒 至少完成 1 条讨伐任务才能挑战`}
+        </button>
+        ${unlocked ? '' : `<div class="boss99-locknote">⚔️ 山谷结界未开——先完成上方任意一条讨伐任务（已完成 ${st.wk}/3 条），结界自解。</div>`}
       </div>
     </div>`;
   },
@@ -470,6 +505,12 @@ Object.assign(App, {
     const def = this._boss99Def();
     const tasks = this._boss99Tasks();
     const st = this._boss99Stats(tasks);
+    // v12.9.51 击杀条件：至少完成 1 条讨伐任务才可开启挑战（按钮态 + 双保险守卫）
+    if (tasks.filter(t => t.done).length < 1) {
+      this._sfx99 && this._sfx99('fail');
+      this._flash('🔒 山谷结界未开——先完成任意一条讨伐任务（健身/学习/双修），再来挑战魔物');
+      return;
+    }
     const month = this._boss99Month();
     const data = this._boss99Data();
     const won = !!data.wins[month];
@@ -582,19 +623,20 @@ Object.assign(App, {
         const d2 = this._boss99Data();
         d2.wins[month] = 1;
         this._boss99Save(d2);
+        const RW = this._BOSS99_REWARD;
         const r2 = this._rpg99Data();
-        r2.exp = (r2.exp || 0) + 40;
+        r2.exp = (r2.exp || 0) + RW.exp;
         this._rpg99Save(r2);
         const p = this._pet99Data();
-        p.points = (p.points || 0) + 36;
+        p.points = (p.points || 0) + RW.gems;
         this._pet99Save(p);
       }
       if (log) log.textContent = first
-        ? `🏆 讨伐成功！${def.n}轰然倒下——独行信条经验 +40 · 宝石 +36`
+        ? `🏆 讨伐成功！${def.n}轰然倒下——独行信条经验 +${this._BOSS99_REWARD.exp} · 宝石 +${this._BOSS99_REWARD.gems}`
         : `🏆 再次讨伐成功！（本月奖励已领过）`;
       finPop('🏆 讨伐成功', true);
       try { this._sfx99 && this._sfx99('cheer'); } catch (e) {}
-      this._flash(first ? `🏆 你讨伐了${def.n}！经验 +40 · 宝石 +36` : `🏆 再次讨伐${def.n}成功（本月奖励已领过）`);
+      this._flash(first ? `🏆 你讨伐了${def.n}！经验 +${this._BOSS99_REWARD.exp} · 宝石 +${this._BOSS99_REWARD.gems}` : `🏆 再次讨伐${def.n}成功（本月奖励已领过）`);
       setTimeout(() => { closeBattle(); try { this.render_workbench(); } catch (e) {} }, 1200);
     };
     const lose = () => {

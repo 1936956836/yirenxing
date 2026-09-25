@@ -123,16 +123,16 @@ Object.assign(App, {
         <button class="st99-editbtn plus" title="补录一次纸面练习" onclick="App.st99PracticeModal()">＋</button>
       </div>
       <div class="pz-strip">
-        <span>🎯 今日已练 <b>${t.count}</b> 题 · 正确率 <b>${t.acc}%</b> · 待消灭错题 <b>${wrongN}</b></span>
+        <span>🎯 今日已练 <b>${t.count}</b> 题 · 正确率 <b>${t.acc}%</b> · 待消灭错题 <b>${wrongN}</b>${(() => { try { const q = App._qw99Today(); return q.done ? ` · ⌨️ 背词 <b>${q.done}</b>/20` : ''; } catch (e) { return ''; } })()}</span>
       </div>
       <div class="pz-search">
         <span class="pz-search-ico">🔍</span>
         <input id="pz99Q" type="search" placeholder="输入题组名称搜索" value="${this.esc(pz.q)}" oninput="App._st99PZSearch(this.value)">
       </div>
       <div class="st99-chips" style="margin-top:10px">
-        ${subPill('en', '🔤 英语')}${subPill('pol', '🏛️ 政治')}${subPill('math', '📐 高数')}${subPill('cs', '💻 计算机')}${subPill('prof', '🎓 专业课')}
+        ${subPill('en', '🔤 英语')}${subPill('pol', '🏛️ 政治')}${subPill('math', '📐 高数')}${subPill('cs', '💻 计算机')}${subPill('prof', '🎓 专业课')}<button type="button" class="st99-chip${pz.sub === 'qw' ? ' on' : ''}" onclick="App.qw99PickSub()">⌨️ 背单词</button>
       </div>
-      <div id="pz99Grid" style="margin-top:10px">${this._st99PZGrid()}</div>
+      ${pz.sub === 'qw' ? (() => { try { App._qw99WireKeys(); return App._qw99State().run ? App._qw99RunUI() : App.qw99Page(); } catch (e) { return App.qw99Page(); } })() : `<div id="pz99Grid" style="margin-top:10px">${this._st99PZGrid()}</div>`}
       <div class="pz-quick">
         <span class="pz-quick-t">📖 课本知识（格物图书馆）</span>
         <button type="button" onclick="${gw99Go('en')}">英语</button>
@@ -200,6 +200,8 @@ Object.assign(App, {
     return pills + `<div class="pz-grid">${cards}</div>`;
   },
   st99PZPickSub(k) { const pz = this._st99PZInit(); pz.sub = k; pz.type = ''; this.render_workbench(); },
+  // v12.9.58 背单词子站（Qwerty-Learner · 111-qwerty99.js）
+  qw99PickSub() { const pz = this._st99PZInit(); pz.sub = 'qw'; pz.type = ''; this.render_workbench(); },
   st99PZPickType(t) { const pz = this._st99PZInit(); pz.type = t; this.render_workbench(); },
   _st99PZSearch(q) {
     const pz = this._st99PZInit();

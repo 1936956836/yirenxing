@@ -1,0 +1,38 @@
+[
+	{
+		"pkg": "com.onexing.app",
+		"classpath": "com.onexing.app.Vosk99"
+	},
+	{
+		"pkg": "com.onexing.app",
+		"classpath": "com.onexing.app.Usage99"
+	},
+	{
+		"pkg": "com.onexing.app",
+		"classpath": "com.onexing.app.Lookus99"
+	},
+	{
+		"pkg": "com.onexing.app",
+		"classpath": "com.onexing.app.Lock99"
+	},
+	{
+		"pkg": "com.onexing.app",
+		"classpath": "com.onexing.app.Crash99"
+	},
+	{
+		"pkg": "com.onexing.app",
+		"classpath": "com.onexing.app.Sm99Http"
+	},
+	{
+		"pkg": "@capacitor-community/text-to-speech",
+		"classpath": "com.getcapacitor.community.tts.TextToSpeechPlugin"
+	},
+	{
+		"pkg": "@capacitor/device",
+		"classpath": "com.capacitorjs.plugins.device.DevicePlugin"
+	},
+	{
+		"pkg": "@capacitor/local-notifications",
+		"classpath": "com.capacitorjs.plugins.localnotifications.LocalNotificationsPlugin"
+	}
+]

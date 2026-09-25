@@ -40,6 +40,24 @@ Object.assign(App, {
     const rec = this._dev99 ? this._dev99Get(dk || this._habit99Now(), 'health') : Store.habit99Get(dk || this._habit99Now(), 'health');
     return !!(rec && (rec.ts || rec.makeup) && rec.status !== '感觉良好');
   },
+  // ===== v12.9.50 账号级隐私过滤（用户指令 · 铁律）=====
+  //   非授权账号：服药卡选项不出现「抗病毒」（其药名走自填清单 meds99）；健康卡无「大病复查」（HIV/HPV/TP 专项）；
+  //   卡片描述不含任何 HIV/TP/HPV/抗病毒字样
+  _hb99OptsForMe(c) {
+    const opts = (c && c.opts) ? c.opts.slice() : [];
+    if (this._isAuthorizedAccount && this._isAuthorizedAccount()) return opts;
+    if (c && c.id === 'medicine') return this._myMeds99().list.map(m => m.name);   // 非授权账号：勾选自己填的药
+    if (c && c.id === 'health') return opts.filter(o => o !== '大病复查');
+    return opts;
+  },
+  _hb99DescForMe(c) {
+    if (!c) return '';
+    if (this._isAuthorizedAccount && this._isAuthorizedAccount()) return c.desc || '';
+    if (c.id === 'medicine') return '勾选药物（可多选 · 来自【健康】页你自己的药物清单）· 记录各药今日已服次数';
+    if (c.id === 'health') return '感觉良好 / 小病缠身 二选一；小病缠身勾选症状（可多选）同步【就医数据】急诊科 · 不可补卡';
+    if (c.id === 'medCost') return '需先打卡当日【健康】卡且未勾「感觉良好」才开放 · 填写消费金额（用途自动关联健康卡状态）· 同步【经济数据】· 消费记录卡不计坚持天数';
+    return c.desc || '';
+  },
   _habit99Now() { return Store.today(); },
   _habit99CardState(c) {
     // v10.0 开发者模式：读沙箱数据（不触碰真实 Store）
@@ -285,10 +303,14 @@ Object.assign(App, {
       const streakHtml = c.id === 'fitness'
         ? (streak > 0 ? `💪${streak}周` : '')
         : (streak > 0 ? '🌳' + streak : '');
-      // v2026.0906 消费记录卡累计统计（全量历史：累计消费 x 元 · x 次）
-      const costTotals = c.cost ? this._hb99CostTotals(c.id) : null;
       // v12.9.12 卡面角标：地图区域分组标签（成长/消费/戒/生活）·「有界」= 需先完成前置打卡才开放的卡（健身餐/医疗消）
       const rk = this._map99RegionOf(c);
+      // v12.9.54 用户指令：所有自律习惯（生活/成长/戒分类）卡片增加「已连续坚持 x 天」标识
+      //   （消费类卡不计；健身为周卡口径 → 连续坚持 x 周；戒类 = 连续未破天数）
+      const cont99Html = rk !== 'cost' && streak > 0
+        ? `<div class="hb99-cont99">🔥 已连续坚持 ${streak}${c.id === 'fitness' ? ' 周' : ' 天'}</div>` : '';
+      // v2026.0906 消费记录卡累计统计（全量历史：累计消费 x 元 · x 次）
+      const costTotals = c.cost ? this._hb99CostTotals(c.id) : null;
       const tagRegionHtml = `<span class="hb99-tag hb99-tag-${rk}">${rk === 'zheng' ? '戒' : (rk === 'growth' ? '成长' : (rk === 'cost' ? '消费' : '生活'))}</span>`;
       const tagGated = c.gated ? '<span class="hb99-tag hb99-tag-gated">有界</span>' : '';
       return `
@@ -302,6 +324,7 @@ Object.assign(App, {
           <div class="hb99-name">${tagRegionHtml}${tagGated}${this.esc(c.name)}</div>
           <div class="hb99-win">⏰ ${c.win}</div>
           <div class="hb99-badge">${badge}</div>
+          ${cont99Html}
           ${costTotals && costTotals.cnt ? `<div style="font-size:10px;color:#b45309;font-weight:700;margin-top:2px">📈 累计消费${costTotals.total}元 · ${costTotals.cnt}次</div>` : ''}
           <div class="hb99-hold-ring"></div>
         </div>`;
@@ -345,23 +368,25 @@ Object.assign(App, {
     }
     // —— 数据研究所 = 数据中心九库（点击功能卡进入对应数据库）——
     if (sel === 'data') {
+      const _female = this._period99Female && this._period99Female();
       const dcTabs = [
         { tab: 'habit',     ico: '📊', n: '习惯数据', d: '全部习惯的历史检索' },
-        { tab: 'ledger',    ico: '💰', n: '经济数据', d: '收支流水 · 消费自动入账' },
+        { tab: 'ledger',    ico: '💰', n: '经济数据', d: '记账 · 用多久 · 多久吃' },
         { tab: 'illness',   ico: '🩺', n: '就医数据', d: '病例记录 · 体检建议' },
         { tab: 'sport99',   ico: '🏃', n: '运动数据', d: '体测分析 · 动作教学' },
         { tab: 'study99',   ico: '🎓', n: '学习数据', d: '知识树 · 练习记录' },
         { tab: 'health99',  ico: '🍜', n: '饮食数据', d: '今天吃什么盲盒 · 健康指数 · 五脏六腑模型' },
         { tab: 'report99',  ico: '📰', n: '报告数据', d: '每日图文总结报告' },
         { tab: 'reflect99', ico: '🪞', n: '反省数据', d: '补卡留痕 · 反省书' },
-        { tab: 'profile',   ico: '🧾', n: '主人档案', d: '生日 · MBTI · BMI' },
+        { tab: 'profile',   ico: '🧾', n: '主人档案', d: '信息 · BMI · 成就勋章 ×20' },
         { tab: 'quit99',    ico: '👹', n: '戒断数据', d: '四魔封印 · 反向打卡' },
         { tab: 'apps99',    ico: '📱', n: '应用数据', d: '各 App 使用时长 · 娱乐标红' },
+        ...(_female ? [{ tab: 'period99', ico: '🌷', n: '经期数据', d: '女生专属 · 周期月历 · 排卵预测' }] : []),
       ];
       html += `<div class="hb99-foldbar" style="cursor:default">
         <div class="hb99-fold-main">
-          <span style="font-size:15px">🔭</span><b style="font-size:13.5px">数据研究所 · 数据中心十一库</b>
-          <span class="hb99-fold-sum">11 座数据库</span>
+          <span style="font-size:15px">🔭</span><b style="font-size:13.5px">数据研究所 · 数据中心${_female ? '十二' : '十一'}库</b>
+          <span class="hb99-fold-sum">${_female ? 12 : 11} 座数据库</span>
         </div>
         <div class="hb99-fold-sub">打卡数据的去向在这里汇总 · 点击卡片进入对应数据库</div>
       </div>
@@ -1101,17 +1126,20 @@ Object.assign(App, {
               </label>
               <div style="font-size:12px;color:var(--text-soft)">这是 2 次卡：本次记为第 ${Math.min(arr.length + 1, 2)} 次；首次打卡 45 分钟后开放第 2 次打卡，完成 2 次才算本日打卡成功。</div>`;
     } else if (cardId === 'medicine') {
-      body = `<label class="hb99-lbl">今日已服药物（可多选）
-                <div class="hb99-opt" id="hb99f-opt">${(c.opts||[]).map(o=>`<button type="button" class="hb99-chip" onclick="this.classList.toggle('on');App._hb99MedSync()">${o}</button>`).join('')}</div>
+      // v12.9.50 账号级隐私：授权账号 = 固定选项（含抗病毒停药警示）；其他账号 = 自己填的药物清单（meds99）
+      const owner = this._isAuthorizedAccount && this._isAuthorizedAccount();
+      const medOpts = this._hb99OptsForMe(c);
+      body = `<label class="hb99-lbl">今日已服药物（可多选${owner ? '' : ' · 来自【健康】页你自己的药物清单'}）
+                <div class="hb99-opt" id="hb99f-opt">${medOpts.length ? medOpts.map(o=>`<button type="button" class="hb99-chip" onclick="this.classList.toggle('on');App._hb99MedSync()">${this.esc(o)}</button>`).join('') : '<span style="font-size:12px;color:var(--text-soft)">还没有药物——去【健康】页「每日药物服用」添加你每天要吃的药</span>'}</div>
               </label>
               <div id="hb99f-medcnt" style="display:none;margin-top:8px">
-                <label class="hb99-lbl">除抗病毒外，各药今日已服次数
-                  <div class="hb99-opt" id="hb99f-cnts">${(c.opts||[]).filter(o=>o!=='抗病毒').map(o=>`<span style="display:inline-flex;align-items:center;gap:4px;margin:3px;font-size:12px">${o} ×<input type="number" class="input hb99-cnt" data-drug="${o}" min="0" max="9" value="0" style="width:52px;padding:4px 6px"></span>`).join('')}</div>
+                <label class="hb99-lbl">${owner ? '除抗病毒外，各药今日已服次数' : '各药今日已服次数'}
+                  <div class="hb99-opt" id="hb99f-cnts">${medOpts.filter(o=>o!=='抗病毒').map(o=>`<span style="display:inline-flex;align-items:center;gap:4px;margin:3px;font-size:12px">${this.esc(o)} ×<input type="number" class="input hb99-cnt" data-drug="${this.esc(o)}" min="0" max="9" value="0" style="width:52px;padding:4px 6px"></span>`).join('')}</div>
                 </label>
               </div>
-              <div id="hb99f-avwarn" style="display:none;margin-top:8px;padding:10px;border-radius:10px;background:#fef2f2;border:1px solid #fecaca;color:#b91c1c;font-size:13px;font-weight:700">⚠️ 抗病毒药物不得随便停药！！！请填写未服用原因：
+              ${owner ? `<div id="hb99f-avwarn" style="display:none;margin-top:8px;padding:10px;border-radius:10px;background:#fef2f2;border:1px solid #fecaca;color:#b91c1c;font-size:13px;font-weight:700">⚠️ 抗病毒药物不得随便停药！！！请填写未服用原因：
                 <div class="hb99-opt" id="hb99f-avreason" style="margin-top:6px">${['忘带','需购买','消极情绪'].map(r=>`<button type="button" class="hb99-chip" onclick="this.parentNode.querySelectorAll('.hb99-chip').forEach(b=>b.classList.remove('on'));this.classList.add('on')">${r}</button>`).join('')}</div>
-              </div>`;
+              </div>` : ''}`;
     } else if (cardId === 'mood') {
       // v2026.0906 第 26 张小卡：心情（六选一 + 原因 · 当日可多次，间隔 ≥1 小时 · 不可补卡）
       const arr = Store.habit99Get(dk, 'mood') || [];
@@ -1125,12 +1153,15 @@ Object.assign(App, {
               <div style="font-size:12px;color:var(--text-soft)">今日已记录 <b>${arr.length}</b> 次${cool > 0 ? ` · ⏳ 冷却中：距下次可记录还需 ${cool} 分钟` : ' · 现在可记录'}。当日可多次记录，每次需间隔 1 小时；该卡不可补卡。</div>`;
     } else if (cardId === 'health') {
       // v2026.0906 第 27 张小卡：健康（感觉良好/小病缠身/大病复查 三选一 · 小病症状同步急诊科 · 大病复查同步感染科 · 不可补卡）
+      // v12.9.50 账号级隐私：非授权账号无「大病复查」（HIV/HPV/TP 专项），仅 感觉良好/小病缠身
+      const owner = this._isAuthorizedAccount && this._isAuthorizedAccount();
       const hd = Store.habit99Get(dk, 'health') || {};
       const prev = (hd.symptoms || []).slice();
       const prevDisease = hd.recheckDisease || '';
       const prevActs = (hd.recheckActs || []).slice();
-      body = `<label class="hb99-lbl">今日身体状态（三选一）
-                <div class="hb99-opt" id="hb99f-opt">${(c.opts||[]).map(o=>`<button type="button" class="hb99-chip${hd.status===o?' on':''}" onclick="App._hb99HealthRadio(this)">${o}</button>`).join('')}</div>
+      const healthOpts = this._hb99OptsForMe(c);
+      body = `<label class="hb99-lbl">今日身体状态（${owner ? '三' : '二'}选一）
+                <div class="hb99-opt" id="hb99f-opt">${healthOpts.map(o=>`<button type="button" class="hb99-chip${hd.status===o?' on':''}" onclick="App._hb99HealthRadio(this)">${o}</button>`).join('')}</div>
               </label>
               <div id="hb99f-sickbox" style="display:${hd.status==='小病缠身'?'block':'none'}">
                 <label class="hb99-lbl">症状（可多选 · 将同步到【就医数据】急诊科）
@@ -1140,7 +1171,7 @@ Object.assign(App, {
                   <input type="date" id="hb99f-onset" class="input" value="${hd.onsetDate || dk}">
                 </label>
               </div>
-              <div id="hb99f-recheckbox" style="display:${hd.status==='大病复查'?'block':'none'}">
+              ${owner ? `<div id="hb99f-recheckbox" style="display:${hd.status==='大病复查'?'block':'none'}">
                 <label class="hb99-lbl">复查病种（三选一 · 将同步到【就医数据】感染科）
                   <div class="hb99-opt" id="hb99f-rd">${(c.recheckDiseases||[]).map(o=>`<button type="button" class="hb99-chip${prevDisease===o?' on':''}" onclick="this.parentNode.querySelectorAll('.hb99-chip').forEach(b=>b.classList.remove('on'));this.classList.add('on')">${o}</button>`).join('')}</div>
                 </label>
@@ -1151,8 +1182,8 @@ Object.assign(App, {
                   <textarea id="hb99f-rnote" class="textarea" rows="3" placeholder="如：CD4 + 病毒载量复查，指标稳定 / 医院开药 3 个月用量..." style="width:100%;min-height:64px">${this.esc(hd.recheckNote || '')}</textarea>
                 </label>
                 ${prevActs.includes('买药') ? `<div style="font-size:12px;color:#b45309">💊 提示：勾选了「买药」——当天可在【医疗消】卡记录购药花费，用途会自动关联到 ${prevDisease || '该病种'} 药物。</div>` : ''}
-              </div>
-              <div style="font-size:12px;color:var(--text-soft)">打卡窗口 18:00-22:00，当日记录一次。选择「小病缠身」勾选症状（可多选），数据自动同步【数据中心 → 就医数据 → 急诊科】；选择「大病复查」依次选病种（HIV/HPV/TP）与复查项目（体检/治疗/买药，可多选）并填写情况，数据自动同步【数据中心 → 就医数据 → 感染科】；日结后管家阿福会给出就医建议；该卡不可补卡。</div>`;
+              </div>` : ''}
+              <div style="font-size:12px;color:var(--text-soft)">打卡窗口 18:00-22:00，当日记录一次。选择「小病缠身」勾选症状（可多选），数据自动同步【数据中心 → 就医数据 → 急诊科】${owner ? '；选择「大病复查」依次选病种（HIV/HPV/TP）与复查项目（体检/治疗/买药，可多选）并填写情况，数据自动同步【数据中心 → 就医数据 → 感染科】' : ''}；日结后管家阿福会给出就医建议；该卡不可补卡。</div>`;
     } else if (cardId === 'steps') {
       // v2026.0906 第 28 张小卡：步数（20:00-22:00 · 以手机/智能手表数据为准，如实填写 · 计入健康数据健康分析）
       body = `<label class="hb99-lbl">今日步数（步）
@@ -1403,15 +1434,16 @@ Object.assign(App, {
     btn.classList.toggle('on');
   },
   // 服药表单联动：勾选抗病毒 → 隐藏停药警示；勾选其他药 → 显示次数填写
+  // v12.9.50 账号级：非授权账号无抗病毒选项（无停药警示），仅次数填写联动
   _hb99MedSync() {
     const chips = document.querySelectorAll('#hb99f-opt .hb99-chip');
     if (!chips.length) return;
-    const av = chips[0];
-    const anyOther = Array.from(chips).slice(1).some(b => b.classList.contains('on'));
+    const av = Array.from(chips).find(b => (b.textContent || '').trim() === '抗病毒');
+    const anyOn = Array.from(chips).some(b => b.classList.contains('on'));
     const cnt = document.getElementById('hb99f-medcnt');
     const warn = document.getElementById('hb99f-avwarn');
-    if (cnt) cnt.style.display = anyOther ? 'block' : 'none';
-    if (warn) warn.style.display = av.classList.contains('on') ? 'none' : 'block';
+    if (cnt) cnt.style.display = (anyOn && (!av || !av.classList.contains('on') || Array.from(chips).some(b => b !== av && b.classList.contains('on')))) ? 'block' : 'none';
+    if (warn) warn.style.display = (av && av.classList.contains('on')) ? 'none' : 'block';
   },
   // v2026.0906 健康卡表单联动：单选状态 → 勾选「小病缠身」展开症状多选；勾选「大病复查」展开复查配置区
   _hb99HealthRadio(btn) {
@@ -1678,12 +1710,20 @@ Object.assign(App, {
       payload = { parts, minutes };
     }
     else if (cardId === 'medicine') {
+      // v12.9.50 账号级隐私：授权账号 = 固定选项（含抗病毒停药警示）；其他账号 = 自己的药物清单（无抗病毒语义）
+      const owner = this._isAuthorizedAccount && this._isAuthorizedAccount();
       const drugs = selChips('hb99f-opt');
       const cnts = {};
       document.querySelectorAll('.hb99-cnt').forEach(i => { const v = +i.value || 0; if (v > 0) cnts[i.dataset.drug] = v; });
       const avReason = selChips('hb99f-avreason')[0] || '';
-      if (!drugs.includes('抗病毒') && !avReason) { this._flash('⚠️ 请先填写未服抗病毒的原因（停药警示）'); return; }
-      payload = { drugs, counts: cnts, noAVReason: drugs.includes('抗病毒') ? '' : avReason };
+      if (owner) {
+        if (!drugs.includes('抗病毒') && !avReason) { this._flash('⚠️ 请先填写未服抗病毒的原因（停药警示）'); return; }
+      } else {
+        const myOpts = this._hb99OptsForMe(c);
+        if (!myOpts.length) { this._flash('💊 还没有药物——先去【健康】页「每日药物服用」添加你每天要吃的药'); return; }
+        if (!drugs.length) { this._flash('请至少勾选 1 种你已服用的药物'); return; }
+      }
+      payload = { drugs, counts: cnts, noAVReason: (owner && drugs.includes('抗病毒')) ? '' : avReason };
     }
     else if (cardId === 'zhengqi') {
       // v2026.0905 正气：三选一 + 破气明细（时间/方式/大破气次数/理由）
@@ -1774,7 +1814,7 @@ Object.assign(App, {
         onsetDate = val('hb99f-onset') || dk;
       } else if (status === '大病复查') {
         recheckDisease = selChips('hb99f-rd')[0] || '';
-        if (!recheckDisease) { this._flash('「大病复查」需先选择复查病种（HIV/HPV/TP 三选一）'); return; }
+        if (!recheckDisease) { this._flash(`「大病复查」需先选择复查病种（${(c.recheckDiseases||[]).join('/')} 三选一）`); return; }
         recheckActs = selChips('hb99f-ra');
         if (!recheckActs.length) { this._flash('「大病复查」需至少勾选 1 个复查项目（体检/治疗/买药）'); return; }
         recheckNote = (val('hb99f-rnote') || '').trim();
@@ -2094,7 +2134,7 @@ Object.assign(App, {
         ${cardId === 'zhengqi' ? `<div style="padding:8px 10px;border-radius:10px;background:#fef2f2;border:1.5px solid #fecaca;color:#b91c1c;font-weight:800;text-align:center;font-size:13px;margin-bottom:8px">⚠️ 绝对禁止进行性交性插入行为！</div>` : ''}
         ${cardId === 'zhengyan' ? `<div style="padding:8px 10px;border-radius:10px;background:#ecfdf5;border:1.5px solid #a7f3d0;color:#047857;font-weight:800;text-align:center;font-size:13px;margin-bottom:8px">🤐 事以密成，言以泄败——想做的事，在没做成之前，不要告诉别人！</div>` : ''}
         <div>⏰ 打卡窗口：<b>${c.win}</b> · ${c.noStreak ? `📒 消费记录卡 · 不计坚持天数` : (c.zheng ? `🛡️ 连续未破 <b>${streak}</b> 天（勾选「破」当日即归零）` : (c.id === 'fitness' ? `📅 本周 <b>${this._hb99FitnessWeekCount()}/${this._hb99FitNeed()}</b> 次 · 💪 连续达标 <b>${streak}</b> 周` : (c.id === 'water' ? `💧 今日 <b>${this._hb99WaterTotal()}</b>ml / 目标 <b>${this._hb99WaterGoal()}</b>ml · 🌳 连续达标 <b>${streak}</b> 天` : `🌳 连续 <b>${streak}</b> 天`)))}</div>
-        <div style="color:var(--text-soft);font-size:12px">${this.esc(c.desc)}</div>
+        <div style="color:var(--text-soft);font-size:12px">${this.esc(this._hb99DescForMe ? this._hb99DescForMe(c) : (c.desc || ''))}</div>
         <div style="margin-top:10px;font-weight:700">近 14 日记录</div>
         <div style="max-height:300px;overflow:auto">${rows.length ? rows.join('') : '<div class="empty">暂无记录</div>'}</div>
       </div>`,
@@ -2443,11 +2483,11 @@ Object.assign(App, {
     const tab = st.tab || 'home';
     if (tab === 'ledger') return this._wbLedger(wb, W);
     if (tab === 'illness') return this._wbIllness99(wb, W);
-    // v11.8 主人档案（原「空间」个人档案 + BMI 迁入）：档案保存后运势/BMI/穿搭自动联动
+    // v12.9.51 主人档案重做：头像 Hero + 信息行点按编辑 + 成就勋章墙 ×20（档案保存后运势/BMI/穿搭自动联动）
     if (tab === 'profile') {
       return `<div class="card" style="margin-bottom:14px">
           <div class="card-title"><span class="ico">🧾</span>主人档案
-            <span class="sub" style="font-size:11px;color:#94a3b8;margin-left:6px">生日 / MBTI / 身高体重 / 八字（v11.8 自「空间」迁入）</span>
+            <span class="sub" style="font-size:11px;color:#94a3b8;margin-left:6px">信息 · 身体数据 · 成就勋章（点按编辑）</span>
             <button class="btn btn-ghost btn-sm p99-title-btn" onclick="App.navBack()">← 返回上一页</button>
           </div>
         </div>`
@@ -2467,12 +2507,15 @@ Object.assign(App, {
     if (tab === 'reflect99') return this._wbReflect99(wb, W);
     // v12.9.40 戒断数据（四魔封印 · 反向打卡 · 93-quit99.js）
     if (tab === 'quit99') return this._wbQuit99(wb, W);
-    // v12.9.46 应用数据（各 App 今日使用时长 · 95-usage99.js）
+    // v12.9.46 应用数据（各 App 今日使用时长 · 95-native99.js）
     if (tab === 'apps99') return this._wbApps99(wb, W);
+    // v12.9.50 经期数据（女生专属 · 108-period99.js）：档案性别=女 才解锁（页内对男生显示锁定卡）
+    if (tab === 'period99') return this._wbPeriod99(wb, W);
     if (tab === 'home') {
+      const female = this._period99Female && this._period99Female();
       const dc99Cards = [
         { tab: 'habit',    ico: '📊', n: '习惯数据', d: '全部习惯的全数据检索 · 卡片 × 指标 × 图表 · 近 7/30/90 日' },
-        { tab: 'ledger',   ico: '💰', n: '经济数据', d: '可支配收入 + 支出流水 · 管家 50/30/20 科学规划 · 消费卡自动入账' },
+        { tab: 'ledger',   ico: '💰', n: '经济数据', d: '三泡泡轻氧主页 · 记账（50/30/20）· 用多久 · 多久吃' },
         { tab: 'illness',  ico: '🩺', n: '就医数据', d: '感染科 / 急诊科 / 体检建议 · 病例记录 · 健康卡症状自动同步' },
         { tab: 'sport99',  ico: '🏃', n: '运动数据', d: '分析站 · 教学站 · 体测/围度/图表/日历 · 动作动画教学（v12.9 新增）' },
         { tab: 'study99',  ico: '🎓', n: '学习数据', d: '记录站 · 练习站 · 知识树·图表·日历 · 练习正确率（v12.9 新增）' },
@@ -2482,12 +2525,13 @@ Object.assign(App, {
         { tab: 'profile',  ico: '🧾', n: '主人档案', d: '生日 / MBTI / 身高体重 / 八字运势 · BMI 科学建议（v11.8 自「空间」迁入）' },
         { tab: 'quit99',   ico: '👹', n: '戒断数据', d: '四魔封印 · 反向打卡 · 活性/封印/对决/周结算（v12.9.40 新增）' },
         { tab: 'apps99',   ico: '📱', n: '应用数据', d: '各 App 今日使用时长 · 抖音/B站/微博…娱乐标红（v12.9.46 新增）' },
+        ...(female ? [{ tab: 'period99', ico: '🌷', n: '经期数据', d: '女生专属 · 周期月历 · 经期/排卵预测 · 症状统计（v12.9.50 新增）' }] : []),
       ];
       return `<div class="card" style="margin-bottom:14px">
-        <div class="card-title"><span class="ico">📊</span>数据中心 · 十一库一屏
-          <span class="sub" style="font-size:11px;color:#94a3b8;margin-left:6px">习惯 / 经济 / 就医 / 运动 / 学习 / 饮食 / 报告 / 反省 / 档案 / 戒断 / 应用</span>
+        <div class="card-title"><span class="ico">📊</span>数据中心 · ${female ? '十二' : '十一'}库一屏
+          <span class="sub" style="font-size:11px;color:#94a3b8;margin-left:6px">习惯 / 经济 / 就医 / 运动 / 学习 / 饮食 / 报告 / 反省 / 档案 / 戒断 / 应用${female ? ' / 经期' : ''}</span>
         </div>
-        <div style="font-size:12.5px;color:var(--text-soft);line-height:1.7;margin-top:6px">打卡数据的去向在这里汇总：【习惯数据】检索全部习惯的历史打卡，【经济数据】承接所有消费入账，【就医数据】承接健康卡同步的急诊科记录与【体检建议】，【运动数据】为体测分析与动作教学，【学习数据】为知识树与练习记录；v12.9.11 起【健康数据】（原健康数据）、【报告数据】（原报告数据）、【反省数据】（原反省数据）也迁入本中心；【主人档案】为个人信息与 BMI 建议；v12.9.40 起【戒断数据】反向记录四魔物活性（破戒喂养 · 未破饿瘪）。</div>
+        <div style="font-size:12.5px;color:var(--text-soft);line-height:1.7;margin-top:6px">打卡数据的去向在这里汇总：【习惯数据】检索全部习惯的历史打卡，【经济数据】承接所有消费入账，【就医数据】承接健康卡同步的急诊科记录与【体检建议】，【运动数据】为体测分析与动作教学，【学习数据】为知识树与练习记录；v12.9.11 起【健康数据】（原健康数据）、【报告数据】（原报告数据）、【反省数据】（原反省数据）也迁入本中心；【主人档案】为个人信息与 BMI 建议；v12.9.40 起【戒断数据】反向记录四魔物活性（破戒喂养 · 未破饿瘪）。${female ? '【经期数据】为女生专属的周期管理库（月历记录 · 周期预测 · 排卵窗口 · 症状统计）。' : ''}</div>
       </div>
       <div class="wb-entry-grid">
         ${dc99Cards.map(x => `
@@ -2753,7 +2797,7 @@ Object.assign(App, {
         <div>5️⃣ <b>三餐卡</b>：填内容 + 质量 1-5 星 + 就餐类型（居家/外卖/堂食/被请客四选一）；外卖/堂食需填花费并自动同步【数据中心 → 经济数据】，被请客填东家名字。健身餐勾选补剂（蛋白粉/肌酸/增肌粉）；营养餐勾选保健品（维生素 B/C/D、鱼油）。</div>
         <div>6️⃣ <b>学习卡</b>：学习·晨/午/晚为 2 次卡——首次打卡后 45 分钟开放第 2 次，完成 2 次才算当日成功，方式最多选二（英语/政治/计算机/高数/阅读）。</div>
         <div>7️⃣ <b>身体记录卡</b>：大便/小便当日可多次（自动累计）；喝水为达标制——当日累计 ≥1300ml 才算成功；步数 20:00-22:00 填写，以手机/智能手表数据为准；心情当日可多次记录（每次间隔 ≥1 小时，不可补卡）。</div>
-        <div>8️⃣ <b>健康卡</b>（不可补卡）：三选一——「感觉良好」；「小病缠身」勾选症状（可多选，自动同步【数据中心 → 就医数据】急诊科）；「大病复查」依次选病种 HIV/HPV/TP → 复查项目 体检/治疗/买药（可多选）→ 填写复查情况（自动同步【就医数据】感染科）。<b>医疗消</b>金额用途自动关联健康卡状态。</div>
+        <div>8️⃣ <b>健康卡</b>（不可补卡）：${this._isAuthorizedAccount && this._isAuthorizedAccount() ? '三选一——「感觉良好」；「小病缠身」勾选症状（可多选，自动同步【数据中心 → 就医数据】急诊科）；「大病复查」依次选病种 HIV/HPV/TP → 复查项目 体检/治疗/买药（可多选）→ 填写复查情况（自动同步【就医数据】感染科）。' : '二选一——「感觉良好」或「小病缠身」；小病缠身勾选症状（可多选，自动同步【数据中心 → 就医数据】急诊科）。'}<b>医疗消</b>金额用途自动关联健康卡状态。</div>
         <div>9️⃣ <b>戒断四正卡</b>：正气/正心/正魂/正言——勾选「未破」累计连续未破天数；勾「破」仅表示当日已记录（连续天数当日归零，如实记录本身就是自律）。正气卡内含禁止性交性插入行为警示；正心破心需填使用分钟；正魂大破魂需勾选具体行为（烟/酒/槟榔/rush）与时间；正言破言需勾选分级行为（小破：打断/反问/挑刺/抱怨；大破：贬低/大话/炫耀/强改观念/争对错/泄密未成之事）并填写理由——谨言慎行，尊重个体差异，事以密成。正姿同理：未破/小破/大破姿三选一。</div>
         <div>🔟 <b>消费记录卡</b>（不计坚持天数、不进补卡清单）：痘清洁/牙清洁/发修剪/搓澡洗/足洗户/耳采洗为门店消费；交通消/生活消/居住消/人情消/用品消/培养消当日可多次记录——每笔花费自动同步【数据中心 → 经济数据】；搓澡洗/足洗户会自动完成当日洗澡/洗脚卡；人情消请客可联动自动打卡三餐卡。</div>
         <div>1️⃣1️⃣ <b>数据去向</b>：每日 24 点结算——【习惯 → 健康数据】看健康分析与五脏六腑建模；【数据中心】三库一屏：<b>习惯数据</b>检索任意卡片近 7/30/90 日指标（折线/柱状/热力图）、<b>经济数据</b>（原记账）管收支、<b>就医数据</b>（原病历）管病历；【报告数据】看每日图文总结。</div>
@@ -3583,10 +3627,13 @@ Object.assign(App, {
       const chronic = mrRecs.some(r => (r.tags || []).includes('hiv') || (r.tags || []).includes('tp') || r.disease === 'hiv' || r.disease === 'tp');
       html += this._afuCheckupCard(this._afuOrganModel(sSum, chronic), chronic);
     } catch (e) {}
+    // v12.9.50 账号级门控：感染科分区（HIV/HPV/TP）仅授权账号存在；其他账号不显示此卡（无相关描述）
+    if (this._isAuthorizedAccount && this._isAuthorizedAccount()) {
     html += `<div class="card" style="margin-bottom:14px;cursor:pointer" onclick="App.gotoWb('vault99')">
       <div class="card-title"><span class="ico">🔐</span>感染科已移入密码箱 <span class="sub">HIV / HPV / 梅毒TP</span></div>
       <div style="font-size:12.5px;color:var(--text-soft);line-height:1.7;margin-top:6px">这三类健康隐私记录的卡片已迁至【密码箱 · 健康隐私分区】统一看管——未解锁密码箱时，任何页面都不显示具体内容。点击前往 →</div>
     </div>`;
+    }
     groups.forEach(g => {
       html += `<div class="section-label">${g.ico} ${g.name}</div><div class="wb-entry-grid">`;
       g.items.forEach(it => {

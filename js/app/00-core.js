@@ -108,29 +108,26 @@ const App = {
     }
     // v12.9.40 联网门禁：App 规定联网使用——检测到未联网立即全屏锁定，恢复后自动解锁
     try { this._net99Init(); } catch (e) {}
-    // v12.9.41 客户端专属：使用统计懒结算（娱魔绑娱乐时长/惰魔绑全天屏幕）+ APK 自动更新检查
-    // v12.9.43 权限主动提醒：客户端未授权「使用情况访问」→ 每日一次弹引导（授权后永不再弹）
     // v12.9.44 到期锁：安装包直发模式（不走线上更新源）——版本到期全屏锁定，装新版自动解锁
+    // v12.9.59 客户端判定改用 Capacitor 官方 isNativePlatform（_nat99On，95-native99.js）：
+    //   旧自造插件存在性判定 + 使用统计懒结算 + 权限弹窗 + 桥事件监听已随自造插件体系全部移除
     try {
-      if (this._u99Available && this._u99Available()) {
-        try { this._u99ExpiryLock(); } catch (e) {}
-        if (!window.__u99ExpTick) {
-          window.__u99ExpTick = setInterval(() => { try { App._u99ExpiryLock && App._u99ExpiryLock(); } catch(_){} }, 60000);
+      if (this._nat99On && this._nat99On()) {
+        try { this._nat99ExpiryLock(); } catch (e) {}
+        if (!window.__nat99ExpTick) {
+          window.__nat99ExpTick = setInterval(() => { try { App._nat99ExpiryLock && App._nat99ExpiryLock(); } catch(_){} }, 60000);
         }
-        setTimeout(() => { try { this._u99AutoJustice(); } catch (e) {} }, 2000);
-        setTimeout(() => { try { this._u99PermNudge(); } catch (e) {} }, 2600);
-        setTimeout(() => { try { this._apk99Check(); } catch (e) {} }, 3200);
-        // v12.9.45b 更新检查补强：Android 从后台恢复 App 不会重跑 init()——挂全局 visibilitychange，
-        //   回前台即复查更新（15 分钟节流防打扰；配合「每日提醒一次」seen 标记，装新版前不会再错过）
+        // v12.9.55→59 版本更新检测：启动立刻请求云端版本 json（镜像链逐源回退）；网络异常只给
+        //   友好提示，绝不弹调试报错弹窗（更新链详见 95-native99.js _apk99Check）
+        try { this._apk99Check(); } catch (e) {}
+        // v12.9.45b 更新检查补强：Android 从后台恢复 App 不会重跑 init()——visibilitychange
+        //   回前台立即复查（版本锁幂等防重复，无需节流）
         if (!window.__apk99Vis) {
           window.__apk99Vis = true;
           document.addEventListener('visibilitychange', () => {
             try {
               if (document.visibilityState !== 'visible') return;
-              if (!App._u99Available || !App._u99Available()) return;
-              const now = Date.now();
-              if (now - (App._apk99LastVis || 0) < 900000) return;
-              App._apk99LastVis = now;
+              if (!App._nat99On || !App._nat99On()) return;
               App._apk99Check();
             } catch (e) {}
           });
@@ -381,7 +378,7 @@ const App = {
         localStorage.setItem(dismissKey, reason || 'dismiss');
         const btn = document.getElementById('todoPromptBtn');
         if (btn) { btn.classList.remove('skip'); btn.classList.add('muted'); }
-        if (window.App && App.render_dashboard) App.render_dashboard();
+        if (typeof App !== 'undefined' && App.render_dashboard) App.render_dashboard();
       } catch(_){}
     };
     const markSkipToday = () => {
@@ -390,7 +387,7 @@ const App = {
         localStorage.setItem(dismissKey, 'skip');
         const btn = document.getElementById('todoPromptBtn');
         if (btn) { btn.classList.remove('muted'); btn.classList.add('skip'); }
-        if (window.App && App.render_dashboard) App.render_dashboard();
+        if (typeof App !== 'undefined' && App.render_dashboard) App.render_dashboard();
         this._flash('⏸️ 今天不打算做全部 — 今日不再自动弹（顶栏按钮仍可手动打开），0 点后恢复');
       } catch(_){}
     };
@@ -549,7 +546,7 @@ const App = {
       if (btn && localStorage.getItem(`todo_skip_${today}`) !== '1') {
         btn.classList.remove('skip'); btn.classList.add('muted');
       }
-      if (window.App && App.render_dashboard) App.render_dashboard();
+      if (typeof App !== 'undefined' && App.render_dashboard) App.render_dashboard();
     } catch(_){}
   },
   _todoMarkSkipToday() {
@@ -559,7 +556,7 @@ const App = {
       localStorage.setItem(`todo_dismiss_${today}`, 'skip@' + Date.now());
       const btn = document.getElementById('todoPromptBtn');
       if (btn) { btn.classList.remove('muted'); btn.classList.add('skip'); }
-      if (window.App && App.render_dashboard) App.render_dashboard();
+      if (typeof App !== 'undefined' && App.render_dashboard) App.render_dashboard();
       this._flash('⏸️ 今天不打算做全部 — 今日不再自动弹（顶栏「🌈今日待办」仍可随时打开清单），0 点后恢复');
     } catch(_){}
   },

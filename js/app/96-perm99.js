@@ -299,160 +299,13 @@ Object.assign(App, {
   },
 
   // ==================== 独行空间（原权限管理 · 入口：🧭 长按 1 秒）====================
-  PERM99: [
-    { k: 'alarm',   ico: '⏰', n: '闹钟和提醒', tag: '',     d: '定时提醒、番茄钟到点准时唤醒；缺少它提醒会延迟' },
-    { k: 'overlay', ico: '🪟', n: '悬浮窗权限', tag: '关键', d: '聚神锁机页面、悬浮提醒的显示基础' },
-    { k: 'usage',   ico: '📊', n: '使用量权限', tag: '关键', d: '查看各 App 使用情况，对 App 进行监督和记录——四魔自动执法的数据来源' },
-    { k: 'notif',   ico: '🔔', n: '通知栏权限', tag: '',     d: '任务状态通知、利于保持后台稳定运行' },
-    { k: 'mic',     ico: '🎤', n: '话筒权限',   tag: '',     d: '独行表达等语音功能的录音使用——仅在你使用语音时采集，不录音不上传' },
-    { k: 'battery', ico: '🔋', n: '电池不优化', tag: '',     d: '加入省电白名单，防止后台被系统清理，提醒准时到达' },
-    { k: 'applist', ico: '📋', n: '读取应用列表', tag: '关键', d: '识别娱乐 App（抖音/B站/游戏等），四魔执法更精准' },
-  ],
-  _perm99St: null,   // 最近一次权限状态缓存
-
-  async _perm99Status(force) {
-    if (!this._u99Available()) return null;
-    if (!force && this._perm99St) return this._perm99St;
-    try {
-      const r = await this._u99Bridge().permStatus();
-      if (r && r.ok) { this._perm99St = r; return r; }
-    } catch (e) {}
-    return this._perm99St;
-  },
-
-  render_perm99() {
-    const v = document.getElementById('view-perm99');
-    if (!v) return;
-    const sfxOn = this._sfx99On();
-    const st = this._perm99St || {};
-    // v12.9.48 手机专属版：装机即手机环境，默认按客户端对待（权限直跳，不再按网页版降级）
-    const client = this._u99Available() || !!window.__PHONE_EDITION__;
-    const cards = this.PERM99.map(p => {
-      const on = !!st[p.k];
-      return `<div class="perm99-card ${on ? 'on' : ''}" id="perm99card-${p.k}">
-        <div class="perm99-ico">${p.ico}</div>
-        <div class="perm99-mid">
-          <div class="perm99-name">${p.n}${p.tag ? `<span class="perm99-tag">${p.tag}</span>` : ''}</div>
-          <div class="perm99-desc">${p.d}</div>
-        </div>
-        <button type="button" class="perm99-sw ${on ? 'on' : ''}" data-perm="${p.k}" aria-label="${p.n} 开关"></button>
-      </div>`;
-    }).join('');
-    v.innerHTML = `
-      <div class="perm99-wrap">
-        <div class="perm99-head">
-          <button class="btn btn-ghost btn-sm" onclick="App.navBack()">← 返回</button>
-          <div class="perm99-title">🛡️ 独行空间</div>
-          <button class="btn btn-ghost btn-sm" onclick="App._perm99Refresh()">重新检测</button>
-        </div>
-        <div class="perm99-sub">长按 🧭 1 秒可随时回到这里</div>
-        <div class="perm99-banner">ℹ️ 未授权仅影响对应功能，其他功能不受影响 · 所有数据仅本机读取，不出设备</div>
-        ${client ? '' : '<div class="perm99-banner">🌐 当前为网页版——权限内容正常展示；「跳转系统设置」仅在手机/平板客户端上执行，网页端无需授权</div>'}
-        <div class="perm99-acts">
-          <div class="perm99-act" onclick="App._apk99CheckForce()">
-            <div class="perm99-act-ico">🔄</div>
-            <div class="perm99-act-mid">
-              <div class="perm99-act-name">检查更新</div>
-              <div class="perm99-act-desc">检查是否有新版本 · 已是最新会提示</div>
-            </div>
-            <span class="perm99-act-go">›</span>
-          </div>
-          <div class="perm99-act" onclick="App.navigate('guide99')">
-            <div class="perm99-act-ico">📖</div>
-            <div class="perm99-act-mid">
-              <div class="perm99-act-name">一人行攻略</div>
-              <div class="perm99-act-desc">各功能与后续新功能的使用方法</div>
-            </div>
-            <span class="perm99-act-go">›</span>
-          </div>
-        </div>
-        <div class="perm99-card ${sfxOn ? 'on' : ''}">
-          <div class="perm99-ico">🔊</div>
-          <div class="perm99-mid">
-            <div class="perm99-name">全局音效</div>
-            <div class="perm99-desc">点击确认 / 长按流动 / 成功 / 警告提示音——一键总开关</div>
-          </div>
-          <button type="button" class="perm99-sw ${sfxOn ? 'on' : ''}" data-sfx="1" aria-label="音效开关"></button>
-        </div>
-        ${cards}
-        ${client ? '<div class="perm99-foot" id="perm99foot">正在检测权限状态…</div>' : ''}
-      </div>`;
-    if (client) this._perm99Refresh(true);
-    // 开关交互：按压缩放反馈 · 音效 · 跳系统设置
-    v.querySelectorAll('.perm99-sw').forEach(sw => {
-      sw.addEventListener('pointerdown', () => sw.classList.add('pressing'));
-      sw.addEventListener('pointerup', () => sw.classList.remove('pressing'));
-      sw.addEventListener('pointerleave', () => sw.classList.remove('pressing'));
-      sw.addEventListener('click', () => {
-        if (sw.dataset.sfx) {                     // 音效总开关：本页直接生效
-          const now = !this._sfx99On();
-          this._sfx99Set(now);
-          sw.classList.toggle('on', now);
-          const c = sw.closest('.perm99-card');
-          if (c) c.classList.toggle('on', now);
-          this._sfx99(now ? 'on' : 'off');
-          return;
-        }
-        const k = sw.dataset.perm;
-        if (!k) return;
-        // v12.9.46b 权限内容全端开放（用户规则）：仅手机/平板客户端执行跳转系统设置；
-        //   网页版不执行——按一下给说明提示，开关保持原状
-        // v12.9.48 手机专属版（__PHONE_EDITION__）默认手机环境：同客户端待遇
-        if (!this._u99Available() && !window.__PHONE_EDITION__) {
-          this._sfx99('back');
-          this._flash('🌐 网页版无需授权——安装一人行客户端（手机/平板）后，点这里可跳转对应系统设置页');
-          return;
-        }
-        // Android 不允许 App 直接改系统权限——点击开关 = 带你去对应系统设置页自行允许
-        const on = !!(this._perm99St && this._perm99St[k]);
-        if (on) {
-          this._sfx99('back');                   // 已开：也带你过去（那里同样可以关）
-        } else {
-          this._sfx99('on');                     // 未开：琥珀"待确认" + 跳设置
-          sw.classList.add('wait');
-          const card = document.getElementById('perm99card-' + k);
-          if (card) card.classList.add('wait');
-        }
-        this._perm99Open(k);
-      });
-    });
-  },
-
-  async _perm99Open(k) {
-    // v12.9.48 修复手机端「点了没反应」：此前 Java 侧异常被吞成 {ok:false}，JS 又不检查返回值 → 静默失败。
-    //   现在逐项检查：失败给明确提示（Java 侧已加兜底回退到应用详情页，基本不会再失败）。
-    try {
-      const r = await this._u99Bridge().openPermPage({ perm: k });
-      if (r && r.ok === false) {
-        this._flash('❌ ' + (r.err ? ('设置页打开失败：' + String(r.err).slice(0, 60)) : '无法打开系统设置——请手动前往 系统设置→应用→一人行 授权'));
-        return;
-      }
-      this._flash('已跳转系统设置——授权后返回一人行，这里会自动复检 ✅');
-    } catch (e) { this._flash('❌ 无法打开系统设置——请手动前往 系统设置→应用→一人行 授权'); }
-  },
-
-  async _perm99Refresh(silent) {
-    if (!this._u99Available()) return;
-    const st = await this._perm99Status(true);
-    if (!st) { if (!silent) this._flash('⚠️ 权限状态检测失败，稍后再试'); return; }
-    this.PERM99.forEach(p => {
-      const on = !!st[p.k];
-      const sw = document.querySelector('.perm99-sw[data-perm="' + p.k + '"]');
-      const card = document.getElementById('perm99card-' + p.k);
-      if (sw) { sw.classList.toggle('on', on); sw.classList.remove('wait'); }
-      if (card) { card.classList.toggle('on', on); card.classList.remove('wait'); }
-    });
-    const foot = document.getElementById('perm99foot');
-    if (foot) {
-      const t = new Date();
-      const hh = String(t.getHours()).padStart(2, '0'), mm = String(t.getMinutes()).padStart(2, '0');
-      const need = this.PERM99.filter(p => !st[p.k]).length;
-      foot.textContent = '最近检测 ' + hh + ':' + mm + ' · ' + (need === 0 ? '全部权限已就绪 ✅' : '还有 ' + need + ' 项未开启');
-    }
-    if (!silent) this._flash('✅ 权限状态已刷新');
-  },
-
-  // 入场：约 1 秒圆幕渐变（液体流动音已在长按开始瞬间随 15-utils.js 播出，此处不重复）
+// v12.9.69 权限中心重写：
+//   · 权限去重：usage(使用量权限/使用情况访问) / battery(电池不优化/忽略电池优化) 合并
+//   · 全权限三态交互：①顶部「系统已授予/未授予」真值标签 ②点击卡片任意区域跳系统设置
+//     ③右侧开关 = App内业务启停（独立于系统权限，切换即时生效）
+//   · Lookus99 插件 checkAllPerms() 返回全9项系统真值；openSetting(k) 支持全9项跳转
+//   · _perm99AppSw 记录 App 内开关状态（localStorage 持久化）
+// v12.9.60 修复回归：本函数在 v12.9.59 权限页重写时被误删——导致 🧭 长按
   _perm99Enter(ev) {
     const btn = document.getElementById('dock99Toggle');
     const r = btn ? btn.getBoundingClientRect() : null;
@@ -469,6 +322,402 @@ Object.assign(App, {
       veil.classList.add('fade');
       setTimeout(() => { try { veil.remove(); } catch (e) {} }, 380);
     }, 1080);
+  },
+
+  // v12.9.69 权限中心三态模型：
+  //   sys → 系统已授予/未授予（原生 Lookus99.checkAllPerms 真值，只读）
+  //   app → App内开关（App自行持久化的业务启停，独立于系统权限）
+  //   sys 只读 + app 可切 → 卡片顶部标签 + 右侧开关 → 点击卡片跳系统设置
+  // 去重完成：usage(使用量权限/使用情况访问合并) / battery(电池不优化/忽略电池优化合并)
+  PERM99: [
+    // —— 顶部区域（原有基础权限，usage/battery 已与 Lookus 模块合并 ——）
+    { k: 'mic',     ico: '🎤', n: '话筒权限',   tag: '',     d: '语音对话 / 朗读等语音功能——仅在你按下说话时使用，不录音不上传', sys: true },
+    { k: 'notif',   ico: '🔔', n: '通知栏权限', tag: '',     d: '阿福提醒推送到手机通知栏（打卡/喝水/三餐/卫生/睡眠）', sys: true },
+    { k: 'usage',   ico: '📊', n: '使用情况访问', tag: '关键', d: '查看各App使用情况、读取App使用记录、屏幕亮熄屏事件、解锁次数；支持原有统计功能 + 情侣【此时此刻】时间轴', sys: true },
+    { k: 'overlay', ico: '🪟', n: '悬浮窗权限', tag: '关键', d: '聚神锁机页面、悬浮提醒的显示基础', sys: true },
+    { k: 'battery', ico: '🔋', n: '忽略电池优化', tag: '',   d: '加入省电白名单，防止后台被系统清理；保障提醒准时到达、【此时此刻】持续采集设备状态', sys: true },
+    { k: 'applist', ico: '📋', n: '读取应用列表', tag: '',   d: '识别娱乐类App（抖音/B站/游戏等），记录更精准', sys: true },
+    { k: 'alarm',   ico: '⏰', n: '闹钟和提醒', tag: '',     d: '定时提醒、番茄钟到点准时唤醒；缺少它提醒会延迟', sys: true },
+    // —— 【此时此刻】分组（仅独有权限；usage/battery 已在上半区合并）——
+    //   由 LOOKUS99_PERM（115-lookus99.js）驱动，此处不再重复
+  ],
+
+  // App内开关状态（localStorage 持久化，独立于系统权限）
+  _perm99AppSwDef() {
+    // usage / battery 合并后，App内开关同时控制上半区 + Lookus 下游的对应采集
+    const lk = this._lk99Sw ? this._lk99Sw() : { usage: false, notifs: false, battery: false, location: false };
+    return {
+      mic:   Store.getSetting('perm99_app_mic',   '1') === '1',
+      notif: Store.getSetting('perm99_app_notif', '1') === '1',
+      usage: Store.getSetting('perm99_app_usage', '0') === '1' || !!lk.usage,
+      overlay:  Store.getSetting('perm99_app_overlay', '0') === '1',
+      battery: Store.getSetting('perm99_app_battery', '0') === '1' || !!lk.battery,
+      applist: Store.getSetting('perm99_app_applist', '0') === '1',
+      alarm:   Store.getSetting('perm99_app_alarm',   '1') === '1',
+      notifs:  !!lk.notifs,
+      location: !!lk.location,
+    };
+  },
+  _perm99AppSw: null,
+
+  // 全权限系统真值缓存（Lookus99.checkAllPerms 返回）
+  _perm99St: null,
+
+  async _perm99Status(force) {
+    if (!this._nat99On()) return null;
+    // v12.9.73 【P2-6】防抖节流 + 在途合并：从系统设置返回会同时触发
+    //   visibilitychange(0/1200/3500ms) + focus(200/2500ms) + pageshow(300/2000ms)，
+    //   旧版一次返回最多 5~7 路并发 checkAllPerms 原生调用；现在——
+    //   · 非强制调用：500ms 内直接回缓存（节流）
+    //   · 并发调用（含强制）：在途合并，共用同一次原生调用（去重）
+    const now = Date.now();
+    if (!force && this._perm99St && now - (this._perm99StAt || 0) < 500) return this._perm99St;
+    if (this._perm99StatusP) return this._perm99StatusP;
+    const run = (async () => {
+    if (!force && this._perm99St) return this._perm99St;
+    const zero = { mic: false, notif: false, overlay: false, usage: false, battery: false, applist: true, alarm: true, notifs: false, location: false };
+    try {
+      const LK = this._nat99Plg('Lookus99');
+      if (LK && LK.checkAllPerms) {
+        const r = await LK.checkAllPerms();
+        this._perm99St = Object.assign(zero, r || {});
+        this._lk99PermsSt = Object.assign({}, zero, r || {});   // 同步给 Lookus 模块用
+      } else {
+        // 旧 Lookus99（只返回 usage/notifs/battery/location）—— 补齐其余
+        const r2 = LK ? (await LK.checkPerms()) || {} : {};
+        this._perm99St = Object.assign(zero, r2);
+        this._lk99PermsSt = Object.assign({}, zero, r2);
+      }
+    } catch (e) { this._perm99St = Object.assign({}, zero); }
+    // 旧话筒/通知真值插件兜底（Lookus99 新版已返回 mic/notif，但以防万一）
+    try {
+      const SR = this._nat99Plg('Vosk99');
+      if (SR) { const r = await SR.checkPermissions(); if (r && r.recordAudio === 'granted') this._perm99St.mic = true; }
+    } catch (e) {}
+    try {
+      const L = this._nat99Plg('LocalNotifications');
+      if (L) { const r = await L.checkPermissions(); if (r && r.display === 'granted') this._perm99St.notif = true; }
+    } catch (e) {}
+    this._perm99StAt = Date.now();       // 【P2-6】节流时间戳（成功拿到一次真值才刷新）
+    return this._perm99St;
+    })();
+    this._perm99StatusP = run;
+    try { return await run; } finally { if (this._perm99StatusP === run) this._perm99StatusP = null; }
+  },
+
+  // ==================== 崩溃日志（Crash99 · v12.9.73 P1：仅本地保存，上传必须用户同意）====================
+  _crash99Plg() { return this._nat99Plg('Crash99'); },
+  // 启动巡检：有未处理的本地崩溃日志 → 弹窗征询（每批只问一次；绝不静默上传）
+  async _crash99Boot() {
+    if (!this._nat99On()) return;
+    const P = this._crash99Plg();
+    if (!P || !P.pending) return;
+    try {
+      const r = await P.pending();
+      const n = (r && r.count) || 0;
+      if (!n) return;
+      let asked = 0;
+      try { asked = parseInt(localStorage.getItem('crash99_asked') || '0', 10) || 0; } catch (e) {}
+      if (asked >= n) return;                       // 该批已问过（崩溃数没涨不再打扰）
+      try { localStorage.setItem('crash99_asked', String(n)); } catch (e) {}
+      this._modal(`🧯 检测到 ${n} 份崩溃日志（仅保存在本机）`, `
+        <div style="font-size:12.5px;color:#475569;line-height:2;padding:4px 0">
+          上次运行发生了崩溃，堆栈已保存在手机本地（最多 20 份 · 不会自动上传）。<br>
+          <b>是否上传到你的云账户</b>帮助定位问题？也可复制后自行保管。
+        </div>`, [
+        { label: '📤 上传云端', primary: true, onClick: () => this._crash99Upload() },
+        { label: '📋 复制', onClick: () => this._crash99Copy() },
+        { label: '📱 暂不（保留本机）' },
+      ]);
+    } catch (e) {}
+  },
+  async _crash99Upload() {
+    try {
+      const P = this._crash99Plg();
+      if (!P || !P.read) return;
+      const r = await P.read({ limit: 20 });
+      const logs = (r && r.logs) || [];
+      if (!logs.length) { this._flash('本机没有待上传的崩溃日志'); return; }
+      // 隐私红线：仅登录云账户时上传；未登录给复制出路，绝不静默外发
+      if (!(this._c99 && this._c99.client && this._c99.user)) {
+        this._flash('🌐 需先登录云账户再上传——也可点下方「复制」手动带走');
+        this._crash99Copy();
+        return;
+      }
+      const rows = logs.map(l => ({
+        user_id: this._c99.user.id,
+        ver: 'v' + ((window.__APP_VER__ && window.__APP_VER__.v) || ''),
+        file: l.file || '',
+        log: String(l.text || '').slice(0, 20000),
+      }));
+      const { error } = await this._c99.client.from('crash99_logs').insert(rows);
+      if (error) {
+        this._flash('⚠️ 上传未成功（云账户缺 crash99_logs 表或网络异常）——日志已保留本机，可稍后重试');
+        return;
+      }
+      try { await P.clear(); } catch (e) {}
+      this._flash('✅ 崩溃日志已上传云端并清除本机副本——感谢帮助改进');
+    } catch (e) { this._flash('⚠️ 上传失败——日志已保留本机可重试'); }
+  },
+  async _crash99Copy() {
+    try {
+      const P = this._crash99Plg();
+      if (!P || !P.read) return;
+      const r = await P.read({ limit: 20 });
+      const logs = (r && r.logs) || [];
+      if (!logs.length) { this._flash('本机没有崩溃日志'); return; }
+      const text = logs.map(l => `---- ${l.file || ''} ----\n${l.text || ''}`).join('\n\n');
+      try { await navigator.clipboard.writeText(text); this._flash('📋 崩溃日志已复制到剪贴板'); }
+      catch (e) { this._flash('⚠️ 复制失败——剪贴板权限被拒'); }
+    } catch (e) {}
+  },
+
+  render_perm99() {
+    const v = document.getElementById('view-perm99');
+    if (!v) return;
+    const sfxOn = this._sfx99On();
+    const st = this._perm99St || {};
+    // v12.9.69 App内开关状态（独立于系统权限）
+    const appSw = this._perm99AppSwDef();
+    this._perm99AppSw = appSw;
+    const client = this._nat99On() || !!window.__PHONE_EDITION__;
+    // v12.9.69 三态卡片渲染：系统标签（真值）+ 开关（App内）+ 点击跳系统设置
+    const cards = this.PERM99.map(p => this._perm99CardHtml(p, st, appSw)).join('');
+    v.innerHTML = `
+      <div class="perm99-wrap">
+        <div class="perm99-head">
+          <button class="btn btn-ghost btn-sm" onclick="App.navBack()">← 返回</button>
+          <div class="perm99-title">🛡️ 独行空间</div>
+          <button class="btn btn-ghost btn-sm" onclick="App._perm99Refresh()">重新检测</button>
+        </div>
+        <div class="perm99-sub">长按 🧭 1 秒可随时回到这里</div>
+        <div class="perm99-banner">ℹ️ 未授权仅影响对应功能，其他功能不受影响 · 所有数据仅本机读取，不出设备</div>
+        ${client ? '' : '<div class="perm99-banner">🌐 当前为网页版——权限内容正常展示；授权操作在手机客户端上进行</div>'}
+        <div class="perm99-acts">
+          <div class="perm99-act" onclick="App._apk99CheckForce()">
+            <div class="perm99-act-ico">🔄</div>
+            <div class="perm99-act-mid">
+              <div class="perm99-act-name">检查更新</div>
+              <div class="perm99-act-desc">检查是否有新版本 · 已是最新会提示</div>
+            </div>
+            <span class="perm99-act-go">›</span>
+          </div>
+          <div class="perm99-act" onclick="App.gotoWb('notify99')">
+            <div class="perm99-act-ico">🔔</div>
+            <div class="perm99-act-mid">
+              <div class="perm99-act-name">阿福提醒设置</div>
+              <div class="perm99-act-desc">打卡 / 喝水 / 三餐 / 卫生 / 睡眠——推送到手机通知栏</div>
+            </div>
+            <span class="perm99-act-go">›</span>
+          </div>
+          <div class="perm99-act" onclick="App.navigate('guide99')">
+            <div class="perm99-act-ico">📖</div>
+            <div class="perm99-act-mid">
+              <div class="perm99-act-name">一人行攻略</div>
+              <div class="perm99-act-desc">各功能与后续新功能的使用方法</div>
+            </div>
+            <span class="perm99-act-go">›</span>
+          </div>
+        </div>
+        <div class="perm99-card ${sfxOn ? 'on' : ''}" data-clickable="0">
+          <div class="perm99-ico">🔊</div>
+          <div class="perm99-mid">
+            <div class="perm99-name">全局音效</div>
+            <div class="perm99-desc">点击确认 / 长按流动 / 成功 / 警告提示音——一键总开关</div>
+          </div>
+          <button type="button" class="perm99-sw ${sfxOn ? 'on' : ''}" data-sfx="1" aria-label="音效开关"></button>
+        </div>
+        ${cards}
+        ${this._lk99On && this._lk99On() ? `
+        <div class="lk99-pc-head">📡 设备同步 ·【此时此刻】（情侣空间）</div>
+        <div class="perm99-banner lk99-law-b">以上设备权限仅用于双方知情授权的信息同步，您可随时在此关闭任一权限；关闭后相关数据将停止采集与同步</div>
+        ${this._lk99PermRowsHtml(st)}
+        <div class="perm99-foot" style="margin-top:8px">①系统授权状态为只读真值（跳系统设置手动开启）②右侧开关为本App内启停（独立于系统权限 · 切换即时生效真停采）</div>` : ''}
+        ${client ? '<div class="perm99-foot" id="perm99foot">正在检测权限状态…</div>' : ''}
+      </div>`;
+    if (client) this._perm99Refresh(true);
+
+    // —— v12.9.69 事件绑定：卡片点击跳系统设置 / 右侧开关只切 App内状态 ——
+    // 全局音效卡：data-clickable="0" 不绑定跳设置
+    v.querySelectorAll('.perm99-card').forEach(card => {
+      const k = card.dataset.perm;
+      if (!k) return;                                    // sfx 卡没有 data-perm
+      card.addEventListener('click', (ev) => {
+        if (ev.target && ev.target.closest('.perm99-sw')) return;    // 点的是开关 → 不走跳转
+        if (ev.target && ev.target.closest('button')) return;
+        if (!this._nat99On() && !window.__PHONE_EDITION__) {
+          this._sfx99('back');
+          this._flash('🌐 网页版——在手机客户端点击卡面可跳系统设置');
+          return;
+        }
+        this._sfx99('tap');
+        this._perm99JumpSetting(k);
+      });
+    });
+    // 所有开关按钮
+    v.querySelectorAll('.perm99-sw').forEach(sw => {
+      sw.addEventListener('pointerdown', () => sw.classList.add('pressing'));
+      sw.addEventListener('pointerup', () => sw.classList.remove('pressing'));
+      sw.addEventListener('pointerleave', () => sw.classList.remove('pressing'));
+      sw.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        if (sw.dataset.sfx) {                           // 音效总开关：本页直接生效
+          const now = !this._sfx99On();
+          this._sfx99Set(now);
+          sw.classList.toggle('on', now);
+          const c = sw.closest('.perm99-card');
+          if (c) c.classList.toggle('on', now);
+          this._sfx99(now ? 'on' : 'off');
+          return;
+        }
+        const k = sw.dataset.perm;
+        if (!k) {
+          const lk = sw.dataset.lk;
+          if (lk) this._lk99SwToggle(lk);               // Lookus 下游专用开关
+          return;
+        }
+        // —— v12.9.69 三态开关切换逻辑 ——
+        if (!this._nat99On() && !window.__PHONE_EDITION__) {
+          this._sfx99('back');
+          this._flash('🌐 网页版无需授权——权限在手机客户端的对应功能里按需申请');
+          return;
+        }
+        this._perm99AppSwToggle(k);
+      });
+    });
+  },
+
+  // v12.9.69 生成一张权限卡片 HTML（三态：系统标签 + 名称+关键标签 + 描述 + App内开关）
+  _perm99CardHtml(p, sysSt, appSw) {
+    const sysOk = !!sysSt[p.k];
+    const on = !!appSw[p.k];
+    // usage / battery 合并：Lookus 下游开关也一起驱动
+    const merged = (p.k === 'usage' || p.k === 'battery') && !!appSw['lk_' + p.k.slice(0,1)];   // 不用了，已用 _perm99AppSwDef 统一
+    return `<div class="perm99-card ${on && sysOk ? 'on' : sysOk ? '' : ''}" data-perm="${p.k}" id="perm99card-${p.k}">
+      <div class="perm99-ico">${p.ico}</div>
+      <div class="perm99-mid">
+        <div class="perm99-name">${p.n}${p.tag ? `<span class="perm99-tag">${p.tag}</span>` : ''}${p.sys !== false ? `<span class="lk99-sys sys-chip ${sysOk ? 'ok' : ''}">${sysOk ? '系统已授予' : '系统未授予'}</span>` : ''}</div>
+        <div class="perm99-desc">${p.d}</div>
+      </div>
+      <button type="button" class="perm99-sw ${on ? 'on' : ''}" data-perm="${p.k}" aria-label="${p.n} App内启停"></button>
+    </div>`;
+  },
+
+  // v12.9.69 卡片点击 → 跳系统设置（Lookus99.openSetting 支持全 9 项）
+  async _perm99JumpSetting(k) {
+    const P = this._nat99Plg('Lookus99');
+    if (!P || !P.openSetting) {
+      this._flash('📱 请在手机客户端上开启该权限');
+      return;
+    }
+    try {
+      await P.openSetting({ k });
+      this._flash('已跳转系统设置——开启后返回 App 自动复检');
+    } catch (e) {
+      // 旧 Lookus99 只支持 usage/notifs/battery/location → 兜底：用应用详情页
+      try {
+        const Intent = null;   // 无法在 JS 里直接构造，只能让旧插件来
+        this._flash('⚠️ 该 ROM 没有对应设置页——到 系统设置 → 应用 → 一人行 → 权限 手动开启');
+      } catch (e2) {}
+    }
+  },
+
+  // v12.9.69 App内开关切换（持久化 + 联动 Lookus 采集）
+  _perm99AppSwToggle(k) {
+    const def = this._perm99AppSwDef();
+    const now = !def[k];
+    def[k] = now;
+    const SET_MAP = { mic: 'perm99_app_mic', notif: 'perm99_app_notif', usage: 'perm99_app_usage', overlay: 'perm99_app_overlay', battery: 'perm99_app_battery', applist: 'perm99_app_applist', alarm: 'perm99_app_alarm' };
+    if (SET_MAP[k]) Store.setSetting(SET_MAP[k], now ? '1' : '0');
+    this._perm99AppSw = def;
+    this._sfx99(now ? 'on' : 'off');
+
+    // usage / battery 合并：同步 Lookus 下游开关
+    if (k === 'usage' || k === 'battery') {
+      if (this._lk99SwSave) {
+        const lk = this._lk99Sw();
+        lk[k] = now;
+        this._lk99SwSave(lk);
+        try { this._lk99SyncService(true); } catch (e) {}
+      }
+    }
+    // v12.9.70 【应用锁机】联动：悬浮窗 App内开关 = 锁机总闸（阿福锁唯一逃生出口）
+    //   关闭 → 停止锁机后台 Service + 销毁全部屏保；开启 → 已有规则则恢复守护
+    if (k === 'overlay' && this._lock99Plg) {
+      try { now ? this._lock99PermResume() : this._lock99PermStopAll(); } catch (e) {}
+    }
+    // usage / battery 关闭 → Lookus 对应功能置灰
+    const card = document.getElementById('perm99card-' + k);
+    const sysOk = !!(this._perm99St && this._perm99St[k]);
+    if (card) card.classList.toggle('on', !!(now && sysOk));
+    const sw = card && card.querySelector('.perm99-sw');
+    if (sw) sw.classList.toggle('on', now);
+    if (!now) {
+      this._flash('已停用「' + ((this.PERM99.find(p => p.k === k) || {}).n || k) + '」——对应数据停止采集与同步');
+      // Lookus 整体停采检查
+      try { if (this._lk99AnyOn && !this._lk99AnyOn()) this._lk99SyncService(true); } catch (e) {}
+    } else {
+      // 开启但系统未授予 → 提示跳设置
+      if (!sysOk) {
+        this._flash('开关已打开——点击卡片去系统设置授权「' + ((this.PERM99.find(p => p.k === k) || {}).n || k) + '」');
+      } else {
+        this._flash('✅ 已开启——功能恢复');
+      }
+    }
+    this._perm99Refresh(true);
+  },
+
+  // v12.9.49 返回巡检：授权弹窗后 120 秒窗口内每 5 秒复检
+  _perm99Arm() {
+    try { if (this.__perm99ArmT) return; } catch (e) {}
+    this.__perm99ArmT = Date.now();
+    const t0 = this.__perm99ArmT;
+    const sig = () => JSON.stringify(this._perm99St || {});
+    let last = sig();
+    const tick = async () => {
+      if (this.currentView !== 'perm99' || Date.now() - t0 > 120000) { clearInterval(int); return; }
+      const st = await this._perm99Status(true);
+      const now = sig();
+      if (now !== last) { last = now; this._perm99Refresh(true); }
+    };
+    const int = setInterval(tick, 5000);
+  },
+
+  async _perm99Refresh(silent) {
+    if (!this._nat99On()) {
+      const foot = document.getElementById('perm99foot');
+      if (foot && window.__PHONE_EDITION__) foot.textContent = 'ℹ️ 权限检测在手机客户端上进行';
+      return;
+    }
+    const st = await this._perm99Status(true);
+    if (!st) {
+      if (!silent) this._flash('⚠️ 权限状态检测失败，稍后再试');
+      return;
+    }
+    const appSw = this._perm99AppSwDef();
+    this._perm99AppSw = appSw;
+    // v12.9.69 全量刷新系统标签 + App内开关状态
+    this.PERM99.forEach(p => {
+      const card = document.getElementById('perm99card-' + p.k);
+      if (!card) return;
+      const sysOk = !!st[p.k];
+      const on = !!appSw[p.k];
+      card.classList.toggle('on', !!(on && sysOk));
+      const sw = card.querySelector('.perm99-sw[data-perm="' + p.k + '"]');
+      if (sw) { sw.classList.toggle('on', on); sw.classList.remove('wait'); }
+      const sys = card.querySelector('.lk99-sys.sys-chip');
+      if (sys) { sys.classList.toggle('ok', sysOk); sys.textContent = sysOk ? '系统已授予' : '系统未授予'; }
+    });
+    // Lookus 分区局部重绘（notifs / location 独有权限）
+    if (this._lk99PermsSt && this._lk99RerenderPerm99) this._lk99RerenderPerm99();
+    const foot = document.getElementById('perm99foot');
+    if (foot) {
+      const t = new Date();
+      const hh = String(t.getHours()).padStart(2, '0'), mm = String(t.getMinutes()).padStart(2, '0');
+      foot.textContent = '最近检测 ' + hh + ':' + mm + ' · 系统权限真值已刷新 · App内开关可随时切换';
+    }
+    if (!silent) this._flash('✅ 权限状态已刷新');
+    this._perm99Arm();
   },
 
   // ==================== v12.9.46 【一人行攻略】（权限管理页入口 · 数据驱动 · 新功能追加条目即可）====================
@@ -498,7 +747,7 @@ Object.assign(App, {
       { t: '应用数据', d: '数据研究所第 11 库：授权「使用量权限」后可查看手机上所有 App 今日使用时长（抖音 / B站 / 微博…），娱乐类自动标红。' },
     ] },
     { g: '📊 数据研究所', items: [
-      { t: '十一库总览', d: '习惯 / 经济 / 就医 / 运动 / 学习 / 饮食 / 报告 / 反省 / 档案 / 戒断 / 应用——打卡数据去向全部在这汇总。' },
+      { t: '十一库总览（女生十二库）', d: '习惯 / 经济 / 就医 / 运动 / 学习 / 饮食 / 报告 / 反省 / 档案 / 戒断 / 应用——打卡数据去向全部在这汇总；档案性别为「女」时追加【经期数据】库（v12.9.50 女生专属）。' },
       { t: '经济数据', d: '记支出 / 记收入双模式，管家 50/30/20 科学分配可支配收入；消费建议卡每日轮换。' },
       { t: '饮食数据 · 今天吃什么', d: '顶部盲盒：点击开盒（摇晃 → 爆开）随机决定今天吃什么——火锅 / 炒菜 / 港式 / 日式… 18 种像素美食，可重开换一个。' },
       { t: '运动数据', d: '分析站（体测 / 图表 / 日历）+ 教学站（动作动画演示）。' },
@@ -508,6 +757,12 @@ Object.assign(App, {
       { t: '云账户', d: '登录后云同步全自动：启动恢复 + 落盘节流上传；多设备同步中心可查冲突记录。' },
       { t: '本地数据', d: '主存档 localStorage 加密分域存储；宠物 / 小家数据独立键（重置主存档不影响）。' },
       { t: '联网门禁', d: 'App 规定联网使用：检测到断网全屏锁定，恢复后自动解锁并补拉实时数据。' },
+    ] },
+    { g: '🔔 v12.9.49 新功能', items: [
+      { t: '阿福 · 通知栏推送', d: '独行空间 →「阿福提醒设置」：打卡 / 喝水 / 三餐 / 卫生 / 睡眠 / 囤货临期六类提醒推送到手机下拉通知栏（独立渠道「阿福的提醒」，可在系统设置单独控制铃声震动；定时走系统 AlarmManager，App 被杀也响）。点通知直达对应页面，通知自带「稍后15分钟」。设置与消息中心都在该页，文案可自定义。' },
+      { t: '物品使用成本', d: '经济数据 →「物品使用成本」：录入买过的东西（价格 / 日期 / 分类 / 照片或像素图标），按次（总价÷次数）或按天（总价÷天数）两种算法一键切换；点卡片「打卡」记一次使用；统计页看两模式汇总、分类占比、使用最多 / 陪伴最久，支持 CSV 导出。新增 +1 经验，打卡 +1 经验 +1 宝石。' },
+      { t: '囤货保质期管理', d: '经济数据 →「囤货保质期」：囤的食物饮品录入到期日或保质期天数，自动判 ✅正常 / ⚠️即将到期 / 🔴临期预警(≤7天) / ❌已过期（最急的排最前）；「消耗」登记扣库存，吃完自动归档；过期自动归档并统计本月食品浪费总额；临期 7 天阿福推系统通知。' },
+      { t: '情侣空间 · 封面流', d: '【Ta】主页重做为封面流：中间卡片最大、两侧立体翘起，左右滑动有透视景深；点侧卡居中、点中卡进入。新增：AI 约会邀请（生成浪漫文案，Ta 回应「必须答应！/ 等你好久了 / 让我先看看时间」）、情侣农场（双方各浇一次水算一天，收获双份奖励）、共同目标（双方共更进度，完成解锁徽章）、回忆相册（照片时间线）、双人足迹、专属装扮（甜蜜值解锁皮肤）。' },
     ] },
   ],
   render_guide99() {
@@ -544,9 +799,32 @@ Object.assign(App, {
 // 模块加载即接线（_modal/_flash 在更早的文件里已定义，此处包装对后续所有调用生效）
 App._sfx99Init();
 
-// 从系统设置返回 App（页面重新可见）→ 权限页自动复检刷新
-document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible' && window.App && App.currentView === 'perm99') {
-    try { App._perm99Refresh(true); } catch (e) {}
-  }
-});
+// 从系统设置返回 App → 权限页自动复检刷新
+// v12.9.49 根因修复：App 是顶层 const（未挂到 window）——旧监听器判 window.App 永远为 undefined，
+//   从系统设置返回后的自动复检从未执行过（这正是「授权后开关不自动打开」的主因）。改判 App 本体。
+//   多路复检：① visibilitychange 即时；② window focus（部分 ROM 从设置页返回不触发
+//   visibilitychange 但触发 focus）；③ 返回后 1.2s / 3.5s 两次延迟补检（权限状态回传慢的 ROM
+//   也能点亮开关）；④ 跳转后 _perm99Arm() 的 120 秒巡检兜底。同一时刻只有权限页在屏才动。
+// v12.9.73 【P2-6】事件合并去重：同 delay 只保留 1 个 timer（visibilitychange + focus 连发
+//   不再重复排程）；真正挡住多路并发打原生插件的是 _perm99Status 的在途合并 + 500ms 节流。
+(function () {
+  const pend = {};
+  const recheck = (delay) => {
+    if (pend[delay] != null) return;
+    pend[delay] = setTimeout(() => {
+      pend[delay] = null;
+      try {
+        if (document.visibilityState !== 'visible') return;
+        if (typeof App !== 'undefined' && App.currentView === 'perm99') App._perm99Refresh(true);
+      } catch (e) {}
+    }, delay);
+  };
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') { recheck(0); recheck(1200); recheck(3500); }
+  });
+  window.addEventListener('focus', () => { recheck(200); recheck(2500); });
+  window.addEventListener('pageshow', (e) => { if (e && e.persisted) { recheck(300); recheck(2000); } });
+  // v12.9.73 【P1 崩溃日志征询】：启动 2.5s 后巡检本地崩溃日志（有则弹窗征询是否上传——
+  //   用户明确同意才走云账户上传，未登录降级复制；绝不静默上传）
+  setTimeout(() => { try { App._crash99Boot(); } catch (e) {} }, 2500);
+})();

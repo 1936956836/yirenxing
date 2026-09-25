@@ -32,12 +32,18 @@ Object.assign(App, {
     const habitWeek = Store.getHabitWeeklyCount();
     const habitHistory = Store.getHabitHistory(8);
     // v2.0.6：健康隐私（用药 / 复查 / 慢性提示）统一 2004 会话锁
+    // v12.9.50 账号级门控：敏感内容仅 1936956836@qq.com 可见；其他账号用药数据自填 + 打卡手动开启
+    const owner = this._isAuthorizedAccount();
     const hivUnlocked = this._isHealthUnlocked();
+    const myMeds = owner ? null : this._myMeds99();
+    const medCheckinOpen = owner ? hivUnlocked : !!(myMeds && myMeds.checkinOn && myMeds.list.length);
     const p5Back = `<div style="margin:14px 0 8px"><button class="btn btn-ghost" onclick="App.navBack()">← 返回上一页</button></div>`;
     let html = p5Back + `
-      ${hivUnlocked
-        ? `<div class="tip-box danger">🚨 重要提醒：当前疾病均为慢性传染性疾病，治疗是长期战线。请每日按时定量服药，将病毒压制至可监控的健康水平。</div>`
-        : `<div class="tip-box" style="background:#eef2ff;border:1px solid #c7d2fe;color:#3730a3">🔒 健康隐私保护中：服药打卡、复查项目、每日药物清单、依从率指标均已隐藏。解锁后可查看与操作（会话级，关页失效）。</div>`}
+      ${owner
+        ? (hivUnlocked
+          ? `<div class="tip-box danger">🚨 重要提醒：当前疾病均为慢性传染性疾病，治疗是长期战线。请每日按时定量服药，将病毒压制至可监控的健康水平。</div>`
+          : `<div class="tip-box" style="background:#eef2ff;border:1px solid #c7d2fe;color:#3730a3">🔒 健康隐私保护中：服药打卡、复查项目、每日药物清单、依从率指标均已隐藏。解锁后可查看与操作（会话级，关页失效）。</div>`)
+        : `<div class="tip-box">💊 坚持记录服药、血压、饮水与体温——数据越完整，健康分析越准确。用药清单在下方自行添加。</div>`}
       <!-- 戒断（合并入健康）-->
       <div class="habit-hero ${rec.habit.relapsed ? 'broken' : 'clean'}">
         <div class="hh-num">${habitStreak}</div>
@@ -45,17 +51,21 @@ Object.assign(App, {
         <div class="hh-sub">${rec.habit.relapsed ? '今日：有 · 已记录' : '今日：无 · 保持中'}</div>
       </div>
       <div class="card">
-        <div class="card-title"><span class="ico">💊</span>健康 6 项 · 北京时间窗口打卡${hivUnlocked?'':' · 🔒 隐私区'}（每项 3~5 金币）</div>
-        ${hivUnlocked ? `
+        <div class="card-title"><span class="ico">💊</span>健康 6 项 · 北京时间窗口打卡${owner && !hivUnlocked ? ' · 🔒 隐私区' : ''}（每项 3~5 金币）</div>
+        ${medCheckinOpen ? `
         ${this._punchBtnHTML({windowName:'hlMedMorn',  done: Store._isMiniDone('health','hlMedMorn'),  btnText:'💊 吃药（早）', onclick:"App.toggleMedAll('morning')"})}
         ${this._punchBtnHTML({windowName:'hlMedNoon',  done: Store._isMiniDone('health','hlMedNoon'),  btnText:'💊 吃药（午）', onclick:"App.toggleMedAll('noon')"})}
         ${this._punchBtnHTML({windowName:'hlMedNight', done: Store._isMiniDone('health','hlMedNight'), btnText:'💊 吃药（晚）', onclick:"App.toggleMedAll('night')"})}
-        ` : `
+        ` : (owner ? `
           <div class="empty" style="text-align:left;margin:12px 0 0;line-height:1.9">
             🔒 隐私项 · 吃药打卡（早/午/晚）已保护。
             <button class="btn btn-primary" style="margin-top:8px" onclick="App._requireHealthUnlock(function(){ App.render_health && App.render_health(); })">🔓 解锁后打卡</button>
           </div>
-        `}
+        ` : `
+          <div class="empty" style="text-align:left;margin:12px 0 0;line-height:1.9">
+            💊 吃药打卡（早/午/晚）默认关闭——在下方「每日药物服用」添加你自己的药物并开启打卡后，这里才会生效。
+          </div>
+        `)}
         ${this._punchBtnHTML({windowName:'hlBp',       done: Store._isMiniDone('health','hlBp'),       btnText:'🫀 测血压',     onclick:"void 0", extraLabel:'在下方血压记录卡填写'})}
         ${this._punchBtnHTML({windowName:'hlWater',    done: Store._isMiniDone('health','hlWater'),    btnText:`💧 饮水达标 ≥${CONFIG.diet.waterMin||1500}ml`, onclick:"void 0", extraLabel:`当前 ${rec.diet.water||0}ml`})}
         ${this._punchBtnHTML({windowName:'hlTemp',     done: Store._isMiniDone('health','hlTemp'),     btnText:'🌡️ 测温',       onclick:"void 0", extraLabel:'在下方体温记录卡填写'})}
@@ -108,15 +118,68 @@ Object.assign(App, {
     html += '</div>';
     html += `
       <div class="card">
-        <div class="card-title"><span class="ico">💊</span>每日药物服用${hivUnlocked?'':' · 🔒 隐私项'}</div>
+        <div class="card-title"><span class="ico">💊</span>${owner ? `每日药物服用${hivUnlocked?'':' · 🔒 隐私项'}` : '每日药物服用 · 你的清单（吃什么药自己填）'}</div>
     `;
-    if (!hivUnlocked) {
+    if (!owner) {
+      // v12.9.50 非授权账号：默认空清单，自行添加药物；「吃药」打卡默认关，需手动开启才生效
+      const m = myMeds;
+      html += `
+        <div class="ledger-form" style="margin:10px 4px 4px">
+          <div style="display:grid;grid-template-columns:2fr 1fr 1fr 1fr;gap:8px">
+            <div class="field" style="margin:0"><label>药名 *</label><input class="input" id="m99Name" placeholder="如：维生素D滴剂"></div>
+            <div class="field" style="margin:0"><label>剂量</label><input class="input" id="m99Dose" placeholder="如：1粒"></div>
+            <div class="field" style="margin:0"><label>时段</label>
+              <select class="input" id="m99Time">
+                <option value="早晨">早晨</option><option value="午间">午间</option><option value="晚间">晚间</option><option value="不限">不限</option>
+              </select>
+            </div>
+            <div class="field" style="margin:0"><label>次数/日</label>
+              <select class="input" id="m99PerDay">
+                <option value="1">1</option><option value="2">2</option><option value="3">3</option>
+              </select>
+            </div>
+          </div>
+          <div class="btn-row" style="margin-top:8px">
+            <button type="button" class="btn btn-primary" style="margin:0" onclick="App.med99Add()">➕ 添加药物</button>
+            <button type="button" class="btn ${m.checkinOn ? 'btn-primary' : 'btn-ghost'}" style="margin:0" onclick="App.med99ToggleCheckin()">${m.checkinOn ? '✅ 吃药打卡已开启（点击关闭）' : '💊 开启「吃药」打卡'}</button>
+          </div>
+          <div style="font-size:12px;color:var(--text-soft);margin-top:8px;line-height:1.8">「吃药」打卡默认关闭：添加药物并开启后，上方健康 6 项的 早/午/晚 吃药打卡才会生效（每项 3~5 金币）。清单随你的账号云端同步。</div>
+        </div>`;
+      if (!m.list.length) {
+        html += `<div class="empty" style="margin:8px 4px 12px">还没有药物——把你每天要吃的药添加进来，打卡与统计会自动跟上。</div>`;
+      } else {
+        m.list.forEach(mm => {
+          const state = rec.medications[mm.id] || { times: [], done: false };
+          const perDay = mm.perDay || 1;
+          let timesHtml = '';
+          if (perDay > 1) {
+            timesHtml = '<div style="display:flex;gap:6px;margin-top:6px">';
+            for (let i = 0; i < perDay; i++) {
+              const checked = state.times && state.times[i];
+              timesHtml += `<button onclick="App.toggleMedTime('${mm.id}',${i})" style="padding:4px 10px;border-radius:6px;border:1.5px solid ${checked?'var(--primary)':'var(--border)'};background:${checked?'var(--primary-soft)':'#fff'};font-size:12px;cursor:pointer">第${i+1}次 ${checked?'✓':'○'}</button>`;
+            }
+            timesHtml += '</div>';
+          }
+          html += `
+            <div class="check-item ${state.done ? 'done' : ''}" onclick="App.toggleMed('${mm.id}')">
+              <div class="cbox">${state.done ? '✓' : ''}</div>
+              <div class="info">
+                <div class="nm">${mm.icon || '💊'} ${this.esc(mm.name)} <span class="badge green">${this.esc(mm.time || '不限')}</span></div>
+                <div class="ds">${this.esc(mm.dose || '按医嘱')}${perDay > 1 ? ` · 每日 ${perDay} 次` : ''}</div>
+                ${timesHtml}
+                <div style="margin-top:6px"><button class="btn btn-ghost" style="font-size:11px;padding:3px 8px" onclick="event.stopPropagation();App.med99Del('${mm.id}')">🗑️ 删除</button></div>
+              </div>
+            </div>
+          `;
+        });
+      }
+    } else if (!hivUnlocked) {
       html += `<div class="empty" style="line-height:2;text-align:left;margin:6px 4px 14px">
           🔒 个人隐私项（每日药物清单、药名、剂量、频次、时段均已保护）。
           <div style="margin-top:8px"><button class="btn btn-primary" onclick="App._requireHealthUnlock(function(){ App.render_health && App.render_health(); })">🔓 解锁后查看 / 打卡</button></div>
         </div>`;
     } else {
-      CONFIG.medications.forEach(m => {
+      (this._medsForMe()).forEach(m => {
         const state = rec.medications[m.id] || { times: [], done: false };
         const perDay = m.perDay || 1;
         // 构建多次服用勾选（如转移因子3次）
@@ -156,6 +219,8 @@ Object.assign(App, {
     `;
     // 季度复查提醒（敏感复查条目内容默认隐藏，30min 会话级解锁，关页自动失效）
     // （hivUnlocked 在 render_health 开头已声明，此处直接复用）
+    // v12.9.50 账号级门控：复查安排为指定账号个人数据，其他账号不显示此卡（其就诊安排自行记录于就医数据）
+    if (owner) {
     const checkupsAll = CONFIG.checkups || [];
     const normal = checkupsAll.filter(c => !this._healthSensMatch(c.name + ' ' + (c.note || '')));
     const sensitive = checkupsAll.filter(c => this._healthSensMatch(c.name + ' ' + (c.note || '')));
@@ -184,16 +249,17 @@ Object.assign(App, {
       }
     }
     html += '</div>';
+    }
     // 体检项目（同步隐藏敏感专项的具体病名，未解锁只显示"专项复查"占位）
     html += `
       <div class="card">
-        <div class="card-title"><span class="ico">🔬</span>年度体检项目 ${hivUnlocked?'':'· 专项隐私项已保护'}</div>
+        <div class="card-title"><span class="ico">🔬</span>年度体检项目 ${owner && !hivUnlocked ? '· 专项隐私项已保护' : ''}</div>
         <div class="list-row"><div class="li-body"><div class="li-nm">无痛胃镜</div><div class="li-ds">肠息肉、病变筛查</div></div></div>
         <div class="list-row"><div class="li-body"><div class="li-nm">胸部低剂量CT</div><div class="li-ds">早期肺癌筛查</div></div></div>
         <div class="list-row"><div class="li-body"><div class="li-nm">乳腺B超/钼靶</div><div class="li-ds">40岁以上钼靶X光</div></div></div>
         <div class="list-row"><div class="li-body"><div class="li-nm">颈动脉B超</div><div class="li-ds">斑块/内膜增厚/血管狭窄</div></div></div>
         <div class="list-row"><div class="li-body"><div class="li-nm">综合检查</div><div class="li-ds">肺部螺旋CT · 胃肠镜 · 呼气实验 · 尿酸血脂 · 甲状腺超声 ${hivUnlocked?'· 感染相关血清联检 + 妇科分型/细胞学联合筛查':''}</div></div>
-        ${hivUnlocked?'':'<div class="list-row" style="background:#fafafa;border:1px dashed #e2e8f0;border-radius:10px;margin:6px 4px"><div class="li-body"><div class="li-nm" style="color:#64748b">🔒 专项隐私体检项</div><div class="li-ds">健康隐私专项体检条目已保护，解锁后可查看完整项目清单。</div></div></div>'}
+        ${owner && !hivUnlocked ? '<div class="list-row" style="background:#fafafa;border:1px dashed #e2e8f0;border-radius:10px;margin:6px 4px"><div class="li-body"><div class="li-nm" style="color:#64748b">🔒 专项隐私体检项</div><div class="li-ds">健康隐私专项体检条目已保护，解锁后可查看完整项目清单。</div></div></div>' : ''}
       </div>
     `;
     // 健康风险提示（生活中常见安全/饮食风险）
@@ -249,6 +315,9 @@ Object.assign(App, {
     const TL = Store.MR_TYPE_LABELS || { chronic:'🩺 慢性病复诊', acute:'⚡ 突发症状', visit:'🏥 就诊/检查' };
     const SL = Store.MR_SEV_LABELS || ['','轻微','一般','中等','严重','🆘 紧急'];
     const data = Store.listMedicalRecords();
+    // v12.9.50 账号级门控：非授权账号数据随账号隔离，自身就医记录不掩码、不弹解锁；
+    //   授权账号维持会话锁（未解锁掩码）。声明前置：statsHTML/B 段在下方即引用（修复原 TDZ 顺序隐患）
+    const hivUnlocked = !this._isAuthorizedAccount() || this._isHealthUnlocked();
     const back = `<div style="margin:14px 0 8px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
       <button class="btn btn-ghost" onclick="App.navBack()">← 返回上一页</button>
       <span style="margin-left:auto;font-size:13px;color:#64748b">💡 系统自动识别的隐私记录会默认打码保护；需要查看输入会话级密码解锁（关页立即失效）。</span>
@@ -328,8 +397,7 @@ Object.assign(App, {
     </div>`;
     // ========== C. 完整记录（新建/编辑表单） & 倒序时间线 ==========
     // 系统自动识别的隐私病名（命中关键词）未解锁一律 mask，绝不外泄具体病种
-    // （变量名复用：hivUnlocked 本函数独立声明，与 render_health 不同 scope）
-    const hivUnlocked = this._isHealthUnlocked();
+    // （hivUnlocked 已在本函数开头声明——v12.9.50 前置，修复原 TDZ 顺序隐患）
     const buildForm = (preset) => {
       preset = preset || { type:'chronic', date: Store.todayBJ ? Store.todayBJ() : Store.today(), disease:'', symptoms:'', medicines:'', hospital:'', doctor:'', severity: 2, temperature:'', bloodPressure:'', heartRate:'', weight:'', diagnose:'', note:'', onsetDate:'', treatment:'' };
       const sevOpts = [1,2,3,4,5].map(i => `<label style="display:inline-flex;align-items:center;gap:4px;margin-right:12px;cursor:pointer"><input type="radio" name="mrForm_sev" value="${i}" ${(+preset.severity === i)?'checked':''}>${SL[i]||i}</label>`).join('');
@@ -509,13 +577,19 @@ Object.assign(App, {
   },
   toggleMed(id) {
     // v2.0.6 隐私保护前置：每日药物打卡属于健康隐私项，未解锁一律拦截（UI 层已隐藏，这里防控制台手动调用绕过）
-    if (!this._isHealthUnlocked()) {
-      this._requireHealthUnlock(function(){ App.render_health(); });
+    // v12.9.50 账号级门控：授权账号走会话锁；其他账号用自己的清单（meds99）且需已开启打卡
+    const m = this._medsForMe().find(x => x.id === id);
+    if (!m) return;
+    if (this._isAuthorizedAccount()) {
+      if (!this._isHealthUnlocked()) {
+        this._requireHealthUnlock(function(){ App.render_health(); });
+        return false;
+      }
+    } else if (!this._myMeds99().checkinOn) {
+      this._flash('💊 用药打卡未开启——在【健康】页添加药物并开启「吃药」打卡后生效');
       return false;
     }
     const rec = this.todayRec();
-    const m = CONFIG.medications.find(x => x.id === id);
-    if (!m) return;
     const state = rec.medications[id] || { times: [], done: false };
     const perDay = m.perDay || 1;
     // ====== v2.0.3 修复：单药点击也必须遵守「早/中/晚」时间窗（按药物 time 字段匹配 slot）======
@@ -549,14 +623,14 @@ Object.assign(App, {
     this.render_health();
   },
   toggleMedTime(id, idx) {
-    // v2.0.6 隐私保护前置
-    if (!this._isHealthUnlocked()) {
+    // v2.0.6 隐私保护前置（v12.9.50 账号级：授权账号会话锁；其他账号自定义清单）
+    if (this._isAuthorizedAccount() && !this._isHealthUnlocked()) {
       this._requireHealthUnlock(function(){ App.render_health(); });
       return false;
     }
     event && event.stopPropagation && event.stopPropagation();
     const rec = this.todayRec();
-    const m = CONFIG.medications.find(x => x.id === id);
+    const m = this._medsForMe().find(x => x.id === id);
     if (!m) return;
     const state = rec.medications[id] || { times: [], done: false };
     if (!state.times) state.times = [];
@@ -602,8 +676,16 @@ Object.assign(App, {
    */
   toggleMedAll(slot) {
     // v2.0.6 隐私保护前置：早晨/午间/晚间服药打卡属于健康隐私项，未解锁一律拦截
-    if (!this._isHealthUnlocked()) {
-      this._requireHealthUnlock(function(){ App.render_health(); });
+    // v12.9.50 账号级：授权账号走会话锁；其他账号需已开启打卡（未开启不生效）
+    const owner = this._isAuthorizedAccount();
+    const m99 = owner ? null : this._myMeds99();
+    if (owner) {
+      if (!this._isHealthUnlocked()) {
+        this._requireHealthUnlock(function(){ App.render_health(); });
+        return false;
+      }
+    } else if (!(m99.checkinOn && m99.list.length)) {
+      this._flash('💊 用药打卡未开启——在【健康】页添加你自己的药物并开启打卡后，这里才会生效');
       return false;
     }
     const winMap = { morning: 'hlMedMorn', noon: 'hlMedNoon', night: 'hlMedNight' };
@@ -618,7 +700,7 @@ Object.assign(App, {
       }
     }
     const rec = this.todayRec();
-    const meds = CONFIG.medications || [];
+    const meds = this._medsForMe();
     // 2) 过滤"这个时段需要吃的药"：药物 time 标签包含 slot 语义，或 perDay=3 的一律按时段打卡
     const slotKeywords = {
       morning: ['早', '晨', '起', '空腹', '早饭', '早餐', '6:00', '7:00', '8:00'],
@@ -668,5 +750,39 @@ Object.assign(App, {
     if (/晚|睡前|临睡|晚餐|晚饭|19:00|20:00|21:00|22:00/.test(t)) return 'night';
     if (/午|中|午餐|午饭|饭前|饭后|11:00|12:00|13:00/.test(t)) return 'noon';
     return null;
+  },
+  // ===== v12.9.50 非授权账号自定义药物清单（meds99）：添加 / 删除 / 「吃药」打卡开关 =====
+  med99Add() {
+    if (this._isAuthorizedAccount()) return this.render_health();   // 授权账号用内置清单，不走自填
+    const name = String((document.getElementById('m99Name') || {}).value || '').trim();
+    const dose = String((document.getElementById('m99Dose') || {}).value || '').trim();
+    const time = String((document.getElementById('m99Time') || {}).value || '不限');
+    const perDay = Math.max(1, Math.min(3, parseInt((document.getElementById('m99PerDay') || {}).value, 10) || 1));
+    if (!name) return this._flash('请填写药名——你自己要吃的药，自己填');
+    if (name.length > 20) return this._flash('药名太长了（≤20 字）');
+    const m = this._myMeds99();
+    if (m.list.some(x => x.name === name)) return this._flash('清单里已经有这个药了');
+    m.list.push({ id: 'm99_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), name, dose, time, perDay, icon: '💊', custom: true });
+    if (m.list.length > 30) m.list.length = 30;
+    this._meds99Save(m);
+    this._flash(`💊 已添加「${name}」——清单随你的账号同步`);
+    this.render_health();
+  },
+  med99Del(id) {
+    if (this._isAuthorizedAccount()) return;
+    const m = this._myMeds99();
+    m.list = m.list.filter(x => x.id !== id);
+    this._meds99Save(m);
+    this._flash('🗑️ 已删除该药物');
+    this.render_health();
+  },
+  med99ToggleCheckin() {
+    if (this._isAuthorizedAccount()) return;
+    const m = this._myMeds99();
+    if (!m.checkinOn && !m.list.length) return this._flash('先添加至少 1 种你自己的药物，再开启打卡');
+    m.checkinOn = !m.checkinOn;
+    this._meds99Save(m);
+    this._flash(m.checkinOn ? '✅ 「吃药」打卡已开启——健康 6 项的早/午/晚打卡生效' : '「吃药」打卡已关闭');
+    this.render_health();
   },
 });
